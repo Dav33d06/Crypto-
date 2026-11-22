@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NovaWallet — Your USDT Wallet</title>
+<script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="nav glass">
+    <div class="brand">
+      <div class="brand-logo">₮</div>
+      <span>Nova<span class="brand-accent">Wallet</span></span>
+    </div>
+    <div class="nav-links">
+      <a href="/login.html" class="nav-link">Login</a>
+      <a href="/register.html" class="btn">Get Started</a>
+      <div class="theme-toggle" data-action="toggle-theme" title="Toggle theme">🌓</div>
+    </div>
+  </div>
+
+  <div class="hero">
+    <h1>Your USDT wallet,<br><span class="grad">fully in your control.</span></h1>
+    <p>
+      Manage supported digital assets, explore markets, swap, and stake from one account.
+      Security features include two-factor authentication and identity verification workflows.
+    </p>
+    <div class="hero-actions">
+      <a class="btn" href="/register.html">Create free account</a>
+      <a class="btn secondary" href="/login.html">Sign in</a>
+    </div>
+
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="feature-icon">💸</div>
+        <h4>Instant transfers</h4>
+        <p>Deposit and withdraw USDT on TRC20, ERC20, BEP20, or Solana — confirmation tracking on every transaction.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📈</div>
+        <h4>USDT staking</h4>
+        <p>Lock USDT from 30 to 180 days and earn up to 14.8% APY, with flexible withdrawal options.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔄</div>
+        <h4>Instant swap</h4>
+        <p>Convert supported NovaWallet assets with a clear 0.5% platform swap fee and a market-reference quote.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔒</div>
+        <h4>Secure custody</h4>
+        <p>Two-factor authentication, KYC review, and deposit-address management tools.</p>
+      </div>
+    </div>
+  </div>
+
+
+  <section class="container" style="padding-top:0; max-width:1180px;">
+    <div class="card" style="padding:14px 0; overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:0 18px 10px;gap:12px;">
+        <h3 style="margin:0;">Live market</h3><span class="tag" id="market-updated">Loading market data…</span>
+      </div>
+      <div id="market-strip" class="market-strip"><span class="tag" style="padding:0 18px;">Fetching top crypto markets…</span></div>
+    </div>
+    <div class="grid grid-3" style="margin-top:16px;">
+      <div class="card"><h3>Wallet-first experience</h3><p class="tag">Manage supported assets and review wallet activity in one place.</p></div>
+      <div class="card"><h3>Tools for active traders</h3><p class="tag">Explore market prices, internal trading and asset swaps.</p></div>
+      <div class="card"><h3>Clear account controls</h3><p class="tag">Review account settings, verification status and transaction history.</p></div>
+    </div>
+  </section>
+
+  <script>
+  (function () {
+    const strip = document.getElementById('market-strip');
+    const fmt = n => Number(n).toLocaleString(undefined,{maximumFractionDigits: n >= 100 ? 2 : 6});
+    async function markets() {
+      try {
+        const r = await fetch('/api/market/strip'); if (!r.ok) throw new Error('unavailable');
+        const j = await r.json();
+        const items = j.data.map(c => `<div class="market-item"><b>${c.symbol}</b><span>$${fmt(c.price)}</span><strong class="${c.change24h >= 0 ? 'market-up' : 'market-down'}">${c.change24h >= 0 ? '+' : ''}${Number(c.change24h).toFixed(2)}%</strong></div>`).join('');
+        strip.innerHTML = `<div class="market-track"><div class="market-set">${items}</div><div class="market-set" aria-hidden="true">${items}</div></div>`;
+        document.getElementById('market-updated').textContent = 'Updated ' + new Date(j.updatedAt).toLocaleTimeString();
+      } catch (_) { strip.textContent = 'Live market data is temporarily unavailable.'; }
+    }
+    markets(); setInterval(markets, 30000);
+  })();
+  </script>
+
+  <script src="/js/prices.js"></script>
+</body>
+</html>

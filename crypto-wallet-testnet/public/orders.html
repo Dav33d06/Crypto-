@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trade — NovaWallet</title>
+<script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/style.css" />
+<script src="/js/lightweight-charts.js"></script>
+</head>
+<body>
+  <div class="nav glass">
+    <div class="brand"><div class="brand-logo">₮</div><span>Nova<span class="brand-accent">Wallet</span></span></div>
+    <div class="nav-links">
+      <a href="/dashboard.html" class="nav-link">Dashboard</a>
+      <a href="/portfolio.html" class="nav-link">Portfolio</a>
+      <a href="/orders.html" class="nav-link active">Trade</a>
+      <a href="/copy.html" class="nav-link">Copy</a>
+      <a href="/staking.html" class="nav-link">Stake</a>
+      <a href="/swap.html" class="nav-link">Swap</a>
+      <a href="/wallet.html" class="nav-link">Wallet</a>
+      <a href="/profile.html" class="nav-link">Profile</a>
+      <div class="theme-toggle" data-action="toggle-theme" title="Toggle theme">🌓</div>
+      <a href="#" data-action="logout" class="nav-link">Logout</a>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Spot Trading</h2>
+
+    <!-- ================= PAIR SELECTOR + PRICE ================= -->
+    <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <div style="display:flex; flex-direction:column; gap:8px; min-width:min(100%, 320px); max-width:520px; flex:1;">
+        <label for="market-search" style="margin:0;">Trading pair</label>
+        <input id="market-search" type="search" placeholder="Search markets (BTC, ETH, SOL…)" oninput="filterMarkets(this.value)" aria-label="Search trading markets" />
+        <select id="market-list" aria-label="Choose trading pair" onchange="selectPair(this.value)" style="width:100%;">
+          <option value="BTC/USDT">BTC/USDT</option>
+        </select>
+      </div>
+      <div style="text-align:right;">
+        <div class="tag">Last price</div>
+        <div id="pair-price" style="font-size: 22px; font-weight: 800;">—</div>
+      </div>
+    </div>
+
+    <!-- ================= PRICE CHART ================= -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+        <h3 style="margin:0;">Price Chart <span id="chart-pair-label" style="color: var(--text-mute); font-weight: 500;">· BTC/USDT</span></h3>
+        <div id="chart-intervals" style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="secondary sm" data-interval="1m" onclick="setChartInterval('1m')">1m</button>
+          <button class="secondary sm" data-interval="5m" onclick="setChartInterval('5m')">5m</button>
+          <button class="secondary sm" data-interval="15m" onclick="setChartInterval('15m')">15m</button>
+          <button class="secondary sm" data-interval="1h" onclick="setChartInterval('1h')">1h</button>
+          <button class="secondary sm" data-interval="4h" onclick="setChartInterval('4h')">4h</button>
+          <button class="secondary sm" data-interval="1d" onclick="setChartInterval('1d')">1d</button>
+        </div>
+      </div>
+      <div id="chart-status" class="tag" style="display:inline-block; margin:0 0 8px;">Preparing chart…</div>
+      <div id="candle-chart" style="width: 100%; height: 380px; min-height:280px;"></div>
+    </div>
+
+    <!-- ================= ORDER BOOK + PLACE ORDER ================= -->
+    <div class="grid grid-2" style="align-items: start;">
+
+      <!-- ORDER BOOK -->
+      <div class="card" style="display:flex; flex-direction:column;">
+        <h3>Order Book</h3>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; font-size: 11px; color: var(--text-mute); text-transform: uppercase; letter-spacing: .06em; padding-bottom: 8px; border-bottom: 1px solid var(--border);">
+          <span>Price</span>
+          <span style="text-align:right;">Amount</span>
+          <span style="text-align:right;">Total</span>
+        </div>
+
+        <div id="asks" style="margin: 8px 0; display:flex; flex-direction:column-reverse; gap: 3px;"></div>
+
+        <div id="spread" style="padding: 10px 0; margin: 6px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align:center; font-size: 16px; font-weight: 700;"></div>
+
+        <div id="bids" style="margin: 8px 0; display:flex; flex-direction:column; gap: 3px;"></div>
+      </div>
+
+      <!-- PLACE ORDER -->
+      <div class="card">
+        <h3>Place Order</h3>
+        <p class="tag">Live execution · Uses your Wallet balances.</p>
+
+        <div style="display:flex; gap:6px; margin-bottom:16px;">
+          <button id="btn-buy" style="flex:1;" onclick="setSide('buy')">Buy</button>
+          <button id="btn-sell" class="secondary" style="flex:1;" onclick="setSide('sell')">Sell</button>
+        </div>
+
+        <label>Order Type</label>
+        <select id="order-type" onchange="updateOrderType()">
+          <option value="limit">Limit</option>
+          <option value="market">Market (instant fill)</option>
+        </select>
+
+        <label id="price-label">Price (USDT)</label>
+        <input id="order-price" type="number" step="0.00000001" placeholder="0.00" oninput="updateOrderTotal()" />
+
+        <label>Amount</label>
+        <input id="order-amount" type="number" step="0.00000001" placeholder="0.00"
+          oninput="updateOrderTotal()" />
+        <div style="display:flex; gap:6px; margin:8px 0 12px;">
+          <button type="button" class="secondary sm" onclick="setAmountPercent(25)">25%</button>
+          <button type="button" class="secondary sm" onclick="setAmountPercent(50)">50%</button>
+          <button type="button" class="secondary sm" onclick="setAmountPercent(75)">75%</button>
+          <button type="button" class="secondary sm" onclick="setAmountPercent(100)">100%</button>
+        </div>
+
+        <div class="row">
+          <div class="row-label">Total</div>
+          <div class="row-sub" id="order-total" style="font-weight:600; color: var(--text);">0.00 USDT</div>
+        </div>
+
+        <div class="row">
+          <div class="row-label">Available</div>
+          <div class="row-sub" id="order-avail">—</div>
+        </div>
+
+        <details style="margin-top: 14px; margin-bottom: 14px;">
+          <summary class="tag" style="cursor:pointer; padding: 6px 0;">
+            ⚙️ Attach Stop-Loss / Take-Profit (optional)
+          </summary>
+          <div style="padding-top: 10px;">
+            <label>Stop-Loss price</label>
+            <input id="order-sl" type="number" step="0.01" placeholder="Auto-sell on loss" />
+
+            <label>Take-Profit price</label>
+            <input id="order-tp" type="number" step="0.01" placeholder="Auto-sell on profit" />
+
+            <p class="tag" style="margin-top: -6px; margin-bottom: 0;">
+              Applied to the position after your order fills.
+            </p>
+          </div>
+        </details>
+
+        <button style="width:100%; margin-top: 12px;" id="btn-submit" onclick="placeOrder()">Buy BTC</button>
+      </div>
+    </div>
+
+    <!-- ================= MY OPEN ORDERS ================= -->
+    <div class="card">
+      <h3>My Open Orders</h3>
+      <div id="my-orders"></div>
+    </div>
+
+        <!-- ================= MY OPEN POSITIONS ================= -->
+    <div class="card">
+      <h3>My Positions</h3>
+      <p class="tag" style="margin-bottom: 12px;">Filled positions with unrealized PnL. Close anytime to sell at market.</p>
+      <div id="my-positions"></div>
+    </div>
+
+    <!-- ================= TRADING HISTORY ================= -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <h3>Trading History</h3>
+        <select id="history-pair-filter" onchange="loadTradingHistory()" style="max-width:180px;">
+          <option value="">All markets</option>
+        </select>
+      </div>
+      <div id="trading-history"></div>
+    </div>
+
+    <!-- ================= RECENT TRADES ================= -->
+    <div class="card">
+      <h3>Recent Trades</h3>
+      <div id="trades"></div>
+    </div>
+  </div>
+
+  <!-- ================= CANCEL ORDER MODAL ================= -->
+  <div class="modal" id="cancel-order-modal">
+    <div class="modal-inner glass" style="max-width: 420px;">
+      <div class="modal-head">
+        <h3>Cancel Order</h3>
+        <button class="modal-close" onclick="closeModal('cancel-order-modal')">×</button>
+      </div>
+      <p class="tag" style="margin-bottom: 18px;">Cancel this order and return locked funds to your wallet?</p>
+      <div style="display:flex; gap:10px;">
+        <button class="secondary" style="flex:1;" onclick="closeModal('cancel-order-modal')">Keep Order</button>
+        <button class="danger" style="flex:1;" onclick="confirmCancelOrder()">Cancel Order</button>
+      </div>
+    </div>
+  </div>
+
+    <!-- ================= CLOSE POSITION MODAL ================= -->
+  <div class="modal" id="close-position-modal">
+    <div class="modal-inner glass" style="max-width: 460px;">
+      <div class="modal-head">
+        <h3>Close Position</h3>
+        <button class="modal-close" onclick="closeModal('close-position-modal')">×</button>
+      </div>
+      <div id="close-pos-body"></div>
+    </div>
+  </div>
+
+  <script src="/js/ui.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/prices.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/chart.js"></script>
+  <script src="/js/orders.js"></script>
+</body>
+</html>

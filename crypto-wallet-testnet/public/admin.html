@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin Panel — NovaWallet</title>
+<script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="nav glass">
+    <div class="brand">
+      <div class="brand-logo">₮</div>
+      <span>Nova<span class="brand-accent">Wallet</span></span>
+    </div>
+    <div class="nav-links">
+      <a href="/dashboard.html" class="nav-link">Dashboard</a>
+      <a href="/portfolio.html" class="nav-link">Portfolio</a>
+      <a href="/orders.html" class="nav-link">Trade</a>
+      <a href="/copy.html" class="nav-link">Copy</a>
+      <a href="/staking.html" class="nav-link">Stake</a>
+      <a href="/swap.html" class="nav-link">Swap</a>
+      <a href="/wallet.html" class="nav-link">Wallet</a>
+      <a href="/profile.html" class="nav-link">Profile</a>
+      <div class="theme-toggle" data-action="toggle-theme" title="Toggle theme">🌓</div>
+      <a href="#" data-action="logout" class="nav-link">Logout</a>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Admin Dashboard</h2>
+
+    <div class="grid grid-3" id="stats">
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    </div>
+
+    <div class="card">
+      <h3>Pending Transactions</h3>
+      <button class="secondary sm" onclick="refreshAll()">Refresh</button>
+      <div id="pending" style="margin-top:16px;"></div>
+    </div>
+
+        <div class="card">
+      <h3>Copy Trading</h3>
+      <p class="tag" style="margin-bottom: 14px;">
+        Manage traders. "Reset & Re-seed" wipes and repopulates the default 6.
+        "Populate 100+" adds generated traders. CSV import supports bulk upload.
+      </p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="danger sm" onclick="seedCopyTraders(true)">Reset & Re-seed</button>
+        <button class="secondary sm" onclick="populateCopyTraders()">Populate 100+</button>
+        <button class="secondary sm" onclick="snapshotLeaderboard()">Snapshot Week</button>
+      </div>
+      <div id="seed-copy-result" style="margin-top: 12px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Import Traders (CSV)</h3>
+      <p class="tag" style="margin-bottom: 12px;">
+        Required: <code>displayName, bio, tier, roi30d, winRate</code> ·
+        Optional: <code>followers, totalTrades, performanceFee, platformFee</code>
+      </p>
+      <input type="file" id="csv-file" accept=".csv" style="margin-bottom: 12px;" />
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button onclick="importTradersCsv()">Import CSV</button>
+        <button class="secondary" onclick="downloadCsvTemplate()">Download Template</button>
+      </div>
+      <div id="csv-import-result" style="margin-top: 12px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Copy Trading Activity</h3>
+      <div class="grid grid-3" id="copy-stats"></div>
+      <div id="copy-relations"></div>
+
+<div class="modal" id="adjust-pnl-modal">
+  <div class="modal-inner glass" style="max-width: 440px;">
+    <div class="modal-head">
+      <h3>Adjust Copy PnL</h3>
+      <button class="modal-close" onclick="closeModal('adjust-pnl-modal')">×</button>
+    </div>
+    <div id="adjust-pnl-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="adjust-fees-modal">
+  <div class="modal-inner glass" style="max-width: 440px;">
+    <div class="modal-head">
+      <h3>Set Profit-Sharing Fees</h3>
+      <button class="modal-close" onclick="closeModal('adjust-fees-modal')">×</button>
+    </div>
+    <div id="adjust-fees-body"></div>
+  </div>
+</div>
+    </div>
+
+    <div class="card">
+      <h3>Profit Sharing</h3>
+      <div class="grid grid-3" id="fee-stats"></div>
+      <h4 style="margin-top: 18px; font-size: 13px; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.08em;">Top Earning Traders</h4>
+      <div id="fee-top" style="margin-top: 10px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Broadcast Banner</h3>
+      <label>Message shown to all users</label>
+      <input id="banner-msg" placeholder="e.g. Scheduled maintenance at 20:00 UTC" />
+      <label style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <input type="checkbox" id="banner-active" style="width:auto; margin:0;" />
+        <span style="font-size:13px; color: var(--text-dim);">Activate banner</span>
+      </label>
+      <button onclick="saveBanner()">Publish</button>
+
+      <div class="row" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border);">
+        <div>
+          <div class="row-label">Maintenance mode</div>
+          <div class="row-sub">Blocks all API calls except auth, admin, and settings</div>
+        </div>
+        <div class="switch" id="maintenance-switch"></div>
+      </div>
+      <label style="margin-top: 12px;">Maintenance message</label>
+      <input id="maintenance-msg" placeholder="We are upgrading. Back in 15 minutes." />
+    </div>
+
+    <div class="card">
+      <h3>Database Controls</h3>
+      <p class="tag">Read-only diagnostics and a redacted JSON data snapshot. This export omits credentials, 2FA secrets, recovery codes and sensitive KYC/login records; it is not a full disaster-recovery backup.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;">
+        <button class="secondary sm" onclick="loadDatabaseStatus()">Check DB Connection</button>
+        <button class="secondary sm" onclick="loadDatabaseStatus()">Refresh Collection Stats</button>
+        <button class="sm" onclick="exportDatabaseSnapshot()">Export Redacted Snapshot</button>
+      </div>
+      <div id="database-status" class="tag">Database status has not been checked.</div>
+      <div id="database-collections" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Users</h3>
+      <p class="tag">Manage user accounts and edit each user’s deposit address by network.</p>
+      <div id="users"></div>
+    </div>
+
+    <div class="card">
+      <h3>KYC Document Review</h3>
+      <div id="kyc-queue"></div>
+    </div>
+
+    <div class="card">
+      <h3>Open Trading Positions</h3>
+      <p class="tag">Close an individual internal position at a specified simulated execution price. Positive PnL closes in profit; lower prices can realize a loss.</p>
+      <button class="secondary sm" onclick="loadAdminPositions()">Refresh Positions</button>
+      <div id="admin-positions" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Active Stakes</h3>
+      <div id="stakes"></div>
+    </div>
+
+    <div class="card">
+      <h3>All Transactions</h3>
+      <div id="alltx"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="deposit-address-modal">
+    <div class="modal-inner glass" style="max-width:520px;">
+      <div class="modal-head"><h3>Update Deposit Addresses</h3><button class="modal-close" onclick="closeModal('deposit-address-modal')">×</button></div>
+      <p id="deposit-address-user" class="tag"></p>
+      <input type="hidden" id="deposit-address-user-id" />
+      <label>TRC20 address</label><input id="deposit-address-trc20" autocomplete="off" placeholder="T…" />
+      <label>ERC20 address</label><input id="deposit-address-erc20" autocomplete="off" placeholder="0x…" />
+      <label>BEP20 address</label><input id="deposit-address-bep20" autocomplete="off" placeholder="0x…" />
+      <p class="tag">Save one network at a time. Confirm the chain and destination with the user before changing an address.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
+        <button onclick="saveDepositAddresses()">Save Address Changes</button>
+        <button class="secondary" onclick="closeModal('deposit-address-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/ui.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/csv-import.js"></script>
+  <script src="/js/admin.js"></script>
+</body>
+</html>
