@@ -47,13 +47,12 @@ app.use('/api', maintenance);
 // ============================================================
 // 6. API ROUTES
 // ============================================================
-app.use('/api/market',        require('./routes/market'));
-app.use('/api/market',        require('./routes/market'));
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/wallet',        require('./routes/wallet'));
 app.use('/api/admin',         require('./routes/admin'));
 app.use('/api/staking',       require('./routes/staking'));
 app.use('/api/profile',       require('./routes/profile'));
+app.use('/api/support',       require('./routes/support'));
 app.use('/api/networks',      require('./routes/networks'));
 app.use('/api/settings',      require('./routes/settings'));
 app.use('/api/swap',          require('./routes/swap'));
@@ -65,6 +64,7 @@ app.use('/api/portfolio',     require('./routes/portfolio'));
 app.use('/api/orders',        require('./routes/orders'));
 app.use('/api/copy',          require('./routes/copy'));
 app.use('/api/leaderboard',   require('./routes/leaderboard'));
+app.use('/api/market',        require('./routes/market'));
 
 // ============================================================
 // 7. LANDING PAGE

@@ -1425,15 +1425,28 @@ html[data-theme="light"] .dropdown-header:hover {
   background: rgba(15, 23, 42, 0.04);
 }
 
-/* Landing page market strip and verifiable trust indicators */
-.market-strip { overflow:hidden; padding:2px 0 8px; }
-.market-track { display:flex; width:max-content; animation:nova-market-scroll 42s linear infinite; }
-.market-set { display:flex; align-items:stretch; gap:10px; padding:0 5px; }
-.market-strip:hover .market-track { animation-play-state:paused; }
-@keyframes nova-market-scroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
-@media (prefers-reduced-motion: reduce) { .market-track { animation:none; } }
-.market-item { flex:0 0 auto; min-width:138px; display:flex; flex-direction:column; gap:5px; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:rgba(148,163,184,.045); font-size:12px; }
-.market-item b { font-size:13px; }
-.market-item span { color:var(--text-dim); }
-.market-up { color:#22c55e; }
-.market-down { color:#ef4444; }
+/* ============ LANDING LIVE MARKET STRIP ============ */
+.market-strip {
+  margin: 18px auto 0;
+  max-width: 1240px;
+  padding: 12px 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(17,25,43,.72);
+  overflow: hidden;
+}
+.market-strip-head { display:flex; align-items:center; gap:9px; margin-bottom:10px; font-size:12px; color:var(--text-dim); }
+.market-strip-head strong { color:var(--text); font-size:12px; letter-spacing:.04em; text-transform:uppercase; }
+.market-live-dot { width:8px; height:8px; border-radius:50%; background:#4ade80; box-shadow:0 0 10px rgba(74,222,128,.7); }
+.market-strip-window { overflow:hidden; width:100%; }
+.market-strip-track { display:flex; align-items:center; width:max-content; gap:0; }
+.market-strip-track.is-ready { animation: market-scroll 46s linear infinite; }
+.market-strip-window:hover .market-strip-track { animation-play-state:paused; }
+.market-coin { display:flex; align-items:center; gap:10px; padding:5px 22px; border-right:1px solid var(--border); white-space:nowrap; font-size:12px; color:var(--text-dim); }
+.market-coin b { color:var(--text); font-size:13px; }
+.market-coin strong { font-size:12px; }
+.market-up { color:#4ade80; }
+.market-down { color:#f87171; }
+.market-strip-loading { padding:8px 0; font-size:12px; color:var(--text-mute); }
+@keyframes market-scroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .market-strip-track.is-ready { animation:none; } }

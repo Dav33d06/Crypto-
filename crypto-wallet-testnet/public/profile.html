@@ -102,6 +102,24 @@
       </div>
     </div>
 
+    <!-- CUSTOMER SUPPORT -->
+    <div class="card" id="contact-support">
+      <h3>Contact Support</h3>
+      <p class="tag" style="margin-bottom:14px;">Create a support request and follow replies from the NovaWallet team.</p>
+      <div class="grid grid-2">
+        <div>
+          <label>Category</label>
+          <select id="support-category"><option value="account">Account</option><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option><option value="trading">Trading</option><option value="technical">Technical issue</option><option value="other">Other</option></select>
+          <label>Subject</label><input id="support-subject" maxlength="160" placeholder="How can we help?" />
+        </div>
+        <div><label>Message</label><textarea id="support-message" rows="5" maxlength="5000" placeholder="Describe the issue and include relevant transaction references. Do not share passwords or 2FA codes."></textarea></div>
+      </div>
+      <button id="support-submit" onclick="submitSupportTicket()">Submit support request</button>
+      <div id="support-feedback" class="tag" style="margin-top:10px;"></div>
+      <h4 style="margin-top:22px;">Your support requests</h4>
+      <div id="support-ticket-list"><div class="skeleton skeleton-row"></div></div>
+    </div>
+
     <!-- KYC VERIFICATION -->
     <div class="card">
       <h3>KYC Verification</h3>
@@ -237,5 +255,6 @@
   <script src="/js/prices.js"></script>
   <script src="/js/notifications.js"></script>
   <script src="/js/profile.js"></script>
+  <script src="/js/support.js"></script>
 </body>
 </html>

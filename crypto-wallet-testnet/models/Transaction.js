@@ -12,6 +12,8 @@ const txSchema = new mongoose.Schema({
   price: { type: Number, default: 0 },
   referenceId: { type: String, default: '', index: true },
   amount:  { type: Number, required: true },
+  fee: { type: Number, default: 0 },
+  netAmount: { type: Number, default: 0 },
   status:  { type: String, enum: ['pending', 'completed', 'rejected'], default: 'pending' },
   note:    { type: String, default: '' },
   address: { type: String, default: '' },
@@ -22,5 +24,8 @@ const txSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
+
+// Prevent duplicate on-chain deposits from being recorded more than once.
+txSchema.index({ network: 1, txHash: 1 }, { unique: true, partialFilterExpression: { txHash: { $type: 'string', $gt: '' } } });
 
 module.exports = mongoose.model('Transaction', txSchema);

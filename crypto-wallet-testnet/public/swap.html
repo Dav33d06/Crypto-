@@ -27,14 +27,14 @@
 
   <div class="container" style="max-width: 560px;">
     <h2>Swap</h2>
-    <p class="tag" style="margin-bottom: 20px;">Convert between supported NovaWallet assets. Live reference quotes, 0.5% swap fee.</p>
+    <p class="tag" style="margin-bottom: 20px;">Swap between supported assets using live reference prices. 0.5% swap fee.</p>
 
     <div class="card">
       <h3>From</h3>
       <div class="swap-row">
         <input id="from-amt" type="number" placeholder="0.00" step="0.00000001" />
         <select id="from-cur">
-          <option value="USDT">USDT</option><option value="BTC">BTC</option><option value="ETH">ETH</option><option value="SOL">SOL</option><option value="BNB">BNB</option><option value="XRP">XRP</option><option value="ADA">ADA</option><option value="DOGE">DOGE</option><option value="LTC">LTC</option><option value="TRX">TRX</option><option value="DOT">DOT</option><option value="AVAX">AVAX</option><option value="LINK">LINK</option><option value="BCH">BCH</option><option value="TON">TON</option><option value="NEAR">NEAR</option><option value="ATOM">ATOM</option><option value="UNI">UNI</option>
+          <option>USDT</option><option>BTC</option><option>ETH</option><option>SOL</option><option>BNB</option><option>XRP</option><option>ADA</option><option>DOGE</option><option>LTC</option><option>TRX</option><option>DOT</option><option>AVAX</option><option>LINK</option><option>BCH</option><option>TON</option><option>NEAR</option><option>ATOM</option><option>UNI</option>
         </select>
       </div>
       <p class="tag">Available: <span id="from-bal">0.00</span></p>
@@ -45,11 +45,11 @@
       <div class="swap-row">
         <input id="to-amt" type="number" placeholder="0.00" readonly />
         <select id="to-cur">
-          <option value="BTC">BTC</option><option value="USDT">USDT</option><option value="ETH">ETH</option><option value="SOL">SOL</option><option value="BNB">BNB</option><option value="XRP">XRP</option><option value="ADA">ADA</option><option value="DOGE">DOGE</option><option value="LTC">LTC</option><option value="TRX">TRX</option><option value="DOT">DOT</option><option value="AVAX">AVAX</option><option value="LINK">LINK</option><option value="BCH">BCH</option><option value="TON">TON</option><option value="NEAR">NEAR</option><option value="ATOM">ATOM</option><option value="UNI">UNI</option>
+          <option>BTC</option><option>ETH</option><option>USDT</option><option>SOL</option><option>BNB</option><option>XRP</option><option>ADA</option><option>DOGE</option><option>LTC</option><option>TRX</option><option>DOT</option><option>AVAX</option><option>LINK</option><option>BCH</option><option>TON</option><option>NEAR</option><option>ATOM</option><option>UNI</option>
         </select>
       </div>
       <p class="tag">You receive</p>
-      <p class="tag" id="quote-source">Quotes are indicative; final rate is checked when you swap.</p>
+      <p class="tag" id="quote-source">Rates are indicative reference prices.</p>
 
       <div class="row" style="margin-top: 18px;">
         <div class="row-label">Rate</div>

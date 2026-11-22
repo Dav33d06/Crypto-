@@ -4,6 +4,7 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const Position = require('../models/Position');
+const Settings = require('../models/Settings');
 const { auth } = require('../middleware/auth');
 const { notify } = require('../middleware/notify');
 const router = express.Router();
@@ -346,6 +347,9 @@ router.post('/', auth, async (req, res) => {
     const tp = req.body.takeProfit === '' || req.body.takeProfit == null ? 0 : Number(req.body.takeProfit);
     if (!['buy','sell'].includes(side)) return res.status(400).json({ error: 'Invalid side' });
     if (!isSupported(pair)) return res.status(400).json({ error: 'Unsupported trading pair' });
+    const [tradingControl, pairControl] = await Promise.all([Settings.findOne({ key: 'trading' }).lean(), Settings.findOne({ key: 'tradingPairs' }).lean()]);
+    if (tradingControl?.value?.enabled === false) return res.status(423).json({ error: tradingControl.value.message || 'New trading orders are temporarily paused by the administrator' });
+    if (pairControl?.value?.[pair]?.enabled === false) return res.status(423).json({ error: `${pair} is currently disabled by the administrator` });
     if (!['market','limit'].includes(type)) return res.status(400).json({ error: 'Invalid order type' });
     if (!finitePositive(amount) || amount > 1e9) return res.status(400).json({ error: 'Enter a valid amount' });
     if (sl < 0 || tp < 0 || !Number.isFinite(sl) || !Number.isFinite(tp)) return res.status(400).json({ error: 'Invalid stop-loss or take-profit price' });
@@ -461,3 +465,5 @@ const matcherTimer = setInterval(matchOpenOrders, 2000);
 if (matcherTimer.unref) matcherTimer.unref();
 
 module.exports = router;
+module.exports.fetchLivePrice = fetchLivePrice;
+module.exports.closePositionAtomic = closePositionAtomic;

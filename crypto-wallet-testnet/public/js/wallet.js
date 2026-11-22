@@ -2,6 +2,7 @@ const user = requireAuth();
 
 let networks = [];           // full list from /api/networks
 let balances = {};
+let lockedBalances = {};
 let depositAddresses = {};
 let selectedAsset = 'USDT';
 let selectedNetwork = null;
@@ -25,6 +26,16 @@ async function init() {
 
   const amtInput = document.getElementById('w-amt');
   if (amtInput) amtInput.addEventListener('input', updateFeeLine);
+}
+
+function renderWalletOverview() {
+  const availableEl = document.getElementById('wallet-total-available');
+  const lockedEl = document.getElementById('wallet-total-locked');
+  const countEl = document.getElementById('wallet-asset-count');
+  const decimals = selectedAsset === 'USDT' ? 2 : 6;
+  if (availableEl) availableEl.textContent = `${Number(balances[selectedAsset] || 0).toFixed(decimals)} ${selectedAsset}`;
+  if (lockedEl) lockedEl.textContent = `${Number(lockedBalances[selectedAsset] || 0).toFixed(decimals)} ${selectedAsset}`;
+  if (countEl) countEl.textContent = Object.values(balances).filter(v => Number(v) > 0).length;
 }
 
 /* ============================================================
@@ -74,6 +85,7 @@ function renderNetworkSelector() {
 function selectAsset(sym) {
   selectedAsset = sym;
   renderAssetSelector();
+  renderWalletOverview();
 
   // Pick first network that supports this asset
   const valid = networks.filter(n => n.currencies.some(c => c.symbol === sym));
@@ -117,7 +129,7 @@ function renderAssetDetail() {
   // QR
   const qrEl = document.getElementById('qr');
   qrEl.innerHTML = '';
-  const payload = `${selectedAsset}:${net.id}:${addr}`;
+  const payload = addr;
   if (window.QRCode) {
     try {
       new QRCode(qrEl, {
@@ -160,6 +172,8 @@ async function loadBalance() {
     const b = await api('/api/wallet/balance');
     balances = b.balances || {};
     depositAddresses = b.depositAddresses || {};
+    lockedBalances = b.locked || {};
+    renderWalletOverview();
     renderAssetSelector();
     if (selectedNetwork) renderAssetDetail();
   } catch (e) { console.warn('loadBalance:', e.message); }
@@ -314,6 +328,7 @@ window.withdraw = async () => {
       body: JSON.stringify({
         amount,
         currency: selectedAsset,
+        network: selectedNetwork.id,
         address,
         code,
         note: `via ${selectedNetwork.id}`
@@ -354,7 +369,7 @@ async function loadTxs() {
           const isPendingDeposit = t.type === 'deposit' && t.status === 'pending';
           const amountCell = isPendingDeposit
             ? '<span class="tag">Awaiting confirmation</span>'
-            : `<span style="font-weight:600;">${t.amount}</span>`;
+            : `<span style="font-weight:600;">${t.amount}</span>${t.type === 'withdraw' && t.fee ? `<div class="tag">Fee: ${t.fee} · Net: ${t.netAmount} ${t.currency}</div>` : ''}`;
 
           return `
             <tr>

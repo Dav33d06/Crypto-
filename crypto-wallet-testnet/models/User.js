@@ -120,12 +120,6 @@ const userSchema = new mongoose.Schema({
     ERC20: { type: String, default: '' },
     BEP20: { type: String, default: '' }
   },
-  depositAddressHistory: [{
-    network: { type: String, enum: ['TRC20', 'ERC20', 'BEP20'], required: true },
-    address: { type: String, required: true },
-    changedAt: { type: Date, default: Date.now },
-    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
-  }],
 
   // ============================================================
   // Referrals
