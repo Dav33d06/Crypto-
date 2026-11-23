@@ -235,18 +235,46 @@ router.get('/positions', async (req, res) => {
   catch (e) { res.status(500).json({ error: 'Could not load open positions' }); }
 });
 router.patch('/positions/:id', async (req, res) => {
-  try { const set = {}; for (const key of ['stopLoss','takeProfit']) if (req.body[key] !== undefined) { const n = Number(req.body[key]); if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: `Invalid ${key}` }); set[key] = n; }
-    const current = await Position.findOne({ _id: req.params.id, amount: { $gt: 0 } }); if (!current) return res.status(404).json({ error: 'Open position not found' });
-    const sl = set.stopLoss ?? current.stopLoss; const tp = set.takeProfit ?? current.takeProfit;
-    if (sl > 0 && sl >= current.avgCost) return res.status(400).json({ error: 'Stop loss must be below the long entry price' });
-    if (tp > 0 && tp <= current.avgCost) return res.status(400).json({ error: 'Take profit must be above the long entry price' });
-    const pos = await Position.findOneAndUpdate({ _id: req.params.id, amount: { $gt: 0 } }, { $set: { ...set, updatedAt: new Date() } }, { new: true }); res.json(pos);
+  try {
+    const set = {};
+    for (const key of ['avgCost', 'stopLoss', 'takeProfit']) {
+      if (req.body[key] === undefined) continue;
+      const n = Number(req.body[key]);
+      if (!Number.isFinite(n) || n < 0 || (key === 'avgCost' && n <= 0)) {
+        return res.status(400).json({ error: `Invalid ${key}` });
+      }
+      set[key] = n;
+    }
+    if (!Object.keys(set).length) return res.status(400).json({ error: 'No position changes supplied' });
+    const current = await Position.findOne({ _id: req.params.id, amount: { $gt: 0 } });
+    if (!current) return res.status(404).json({ error: 'Open position not found' });
+    const entry = set.avgCost ?? current.avgCost;
+    const sl = set.stopLoss ?? current.stopLoss;
+    const tp = set.takeProfit ?? current.takeProfit;
+    if (sl > 0 && sl >= entry) return res.status(400).json({ error: 'Stop loss must be below the entry price' });
+    if (tp > 0 && tp <= entry) return res.status(400).json({ error: 'Take profit must be above the entry price' });
+    const pos = await Position.findOneAndUpdate(
+      { _id: req.params.id, amount: { $gt: 0 } },
+      { $set: { ...set, updatedAt: new Date() } },
+      { new: true, runValidators: true }
+    );
+    if (!pos) return res.status(409).json({ error: 'Position was closed before the changes could be saved' });
+    res.json({ position: pos, note: set.avgCost !== undefined ? 'Entry price updated; wallet balances and original trade records were not changed.' : undefined });
   } catch (e) { res.status(500).json({ error: 'Could not update position' }); }
 });
 router.post('/positions/:id/close', async (req, res) => {
-  try { const pos = await Position.findOne({ _id: req.params.id, amount: { $gt: 0 } }); if (!pos) return res.status(404).json({ error: 'Open position not found' });
-    const orderRoutes = require('./orders'); const price = await orderRoutes.fetchLivePrice(pos.pair); if (!Number.isFinite(price) || price <= 0) return res.status(503).json({ error: 'Reference price unavailable; position not changed' });
-    const result = await orderRoutes.closePositionAtomic(pos._id, pos.user, price, 'Admin'); if (!result) return res.status(409).json({ error: 'Position already closed' }); await notify(pos.user, 'system', 'Position closed by administrator', `${pos.pair} closed at ${price}`).catch(() => {}); res.json(result);
+  try {
+    const closePrice = Number(req.body.closePrice);
+    if (!Number.isFinite(closePrice) || closePrice <= 0 || closePrice > 1e15) {
+      return res.status(400).json({ error: 'Enter a valid positive close price' });
+    }
+    const pos = await Position.findOne({ _id: req.params.id, amount: { $gt: 0 } });
+    if (!pos) return res.status(404).json({ error: 'Open position not found' });
+    const orderRoutes = require('./orders');
+    const result = await orderRoutes.closePositionAtomic(pos._id, pos.user, closePrice, 'Admin');
+    if (!result) return res.status(409).json({ error: 'Position already closed' });
+    await notify(pos.user, 'system', 'Position closed by administrator', `${pos.pair} closed at ${closePrice}; realized PnL ${result.pnl} ${result.quote}`).catch(() => {});
+    res.json({ closed: true, closePrice, ...result });
   } catch (e) { res.status(500).json({ error: e.message || 'Could not close position' }); }
 });
 

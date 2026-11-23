@@ -316,12 +316,12 @@ async function closePositionAtomic(positionId, userId, price, reason) {
       user: userId, side: 'sell', pair: pos.pair, type: 'market', price,
       amount, filled: amount, avgFillPrice: price, status: 'filled',
       closeReason: reason
-    }], { session });
+    }], { session, ordered: true });
     await Transaction.create([{
       user: userId, type: 'earn', category: 'trade_close', direction: 'credit', currency: quote, amount: proceeds,
       pair: pos.pair, side: 'sell', quantity: amount, price, referenceId: String(pos._id), status: 'completed',
       note: `${reason} close ${pos.pair}: sold ${amount} ${baseAsset} @ ${price}; realized PnL ${pnl} ${quote}`
-    }], { session });
+    }], { session, ordered: true });
     return { proceeds, pnl, pair: pos.pair, amount, base, quote };
   });
 }

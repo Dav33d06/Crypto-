@@ -105,12 +105,12 @@ router.post('/', auth, async (req, res) => {
 
       const [swap] = await Swap.create([{
         user: user._id, from, to, fromAmount: amt, toAmount: round(net), rate
-      }], { session });
+      }], { session, ordered: true });
       const referenceId = String(swap._id);
       await Transaction.create([
         { user: user._id, type: 'earn', category: 'swap', direction: 'debit', currency: from, amount: amt, status: 'completed', referenceId, note: `Swap debit ${amt} ${from} → ${to}` },
         { user: user._id, type: 'earn', category: 'swap', direction: 'credit', currency: to, amount: round(net), fee: round(fee), status: 'completed', referenceId, note: `Swap credit ${round(net)} ${to} from ${from}` }
-      ], { session });
+      ], { session, ordered: true });
       result = { swap, balances: user.balances, fee: round(fee) };
     });
     res.json(result);
