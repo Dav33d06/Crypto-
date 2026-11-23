@@ -301,46 +301,73 @@ async function loadCopyRelations() {
   el.innerHTML = '<div class="skeleton skeleton-row"></div>'.repeat(3);
   try {
     const rels = await api('/api/copy/admin/relations');
-    if (!rels.length) {
-      el.innerHTML = '<div class="empty">No copy relations yet</div>';
-      return;
-    }
-    el.innerHTML = `
-      <div class="table-wrap"><table>
-        <thead><tr>
-          <th>Follower</th><th>Trader</th><th>Allocated</th><th>PnL</th>
-          <th>Status</th><th>Since</th><th>Actions</th>
-        </tr></thead>
-        <tbody>${rels.map(r => `
-          <tr>
-            <td>${r.follower?.username || '-'}<div class="tag">${r.follower?.email || ''}</div></td>
-            <td>${r.trader?.displayName || '-'}<div class="tag">${r.trader?.tier || ''}</div></td>
-            <td style="font-weight:600;">${r.allocation.toFixed(2)} USDT</td>
-            <td style="color: ${r.pnl >= 0 ? 'var(--accent)' : '#fca5a5'}; font-weight:600;">
-              ${r.pnl >= 0 ? '+' : ''}${(r.pnl || 0).toFixed(2)}
-            </td>
-            <td>${r.active
-              ? '<span class="badge completed">active</span>'
-              : '<span class="badge rejected">stopped</span>'}</td>
-            <td class="tag">${new Date(r.createdAt).toLocaleDateString()}</td>
-            <td style="display:flex; gap:4px; flex-wrap:wrap;">
-  ${r.active
-    ? `<button class="danger sm" onclick="stopCopy('${r._id}')">Stop</button>`
-    : ''}
-  <button class="secondary sm" onclick="openAdjustPnl('${r._id}', ${r.pnl || 0}, '${r.trader?.displayName || ''}')">
-    PnL
-  </button>
-  ${r.trader
-    ? `<button class="secondary sm" onclick="openAdjustFees('${r.trader._id}', ${r.trader.performanceFee || 10}, ${r.trader.platformFee || 2}, '${r.trader.displayName}')">
-         Fees
-       </button>`
-    : ''}
-</td>
-          </tr>`).join('')}
-        </tbody>
-      </table></div>`;
+    if (!rels.length) { el.innerHTML = '<div class="empty">No copy relations yet</div>'; return; }
+    el.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Follower</th><th>Trader</th><th>Allocation</th><th>Trader ROI</th><th>Copy PnL</th><th>Status</th><th>Since</th><th>Actions</th></tr></thead>
+      <tbody>${rels.map(r => {
+        const pnl = Number(r.pnl || 0), roi = Number(r.trader?.roi30d || 0);
+        return `<tr>
+          <td>${r.follower?.username || '-'}<div class="tag">${r.follower?.email || ''}</div></td>
+          <td>${r.trader?.displayName || '-'}<div class="tag">${r.trader?.tier || ''} · win ${Number(r.trader?.winRate || 0).toFixed(1)}%</div></td>
+          <td>${Number(r.allocation || 0).toFixed(2)} USDT</td>
+          <td style="color:${roi >= 0 ? 'var(--accent)' : '#fca5a5'};font-weight:600;">${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%</td>
+          <td style="color:${pnl >= 0 ? 'var(--accent)' : '#fca5a5'};font-weight:600;">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT</td>
+          <td>${r.active ? '<span class="badge completed">active</span>' : '<span class="badge rejected">stopped</span>'}</td>
+          <td class="tag">${new Date(r.createdAt).toLocaleDateString()}</td>
+          <td style="display:flex;gap:4px;flex-wrap:wrap;">
+            ${r.active ? `<button class="secondary sm" onclick="openEditActiveCopy('${r._id}',${pnl},${roi},${Number(r.trader?.winRate || 0)},${Number(r.trader?.followers || 0)},${Number(r.trader?.totalTrades || 0)})">Edit stats</button><button class="danger sm" onclick="stopCopy('${r._id}')">Stop</button>` : ''}
+            ${r.trader ? `<button class="secondary sm" onclick="openAdjustFees('${r.trader._id}',${Number(r.trader.performanceFee || 10)},${Number(r.trader.platformFee || 2)},'${String(r.trader.displayName || '').replace(/'/g, '')}')">Trader fees</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('')}</tbody></table></div>`;
   } catch (e) { toast(e.message, 'error'); }
 }
+
+window.openEditActiveCopy = (id, pnl, roi, winRate, followers, totalTrades) => {
+  document.getElementById('edit-active-copy-body').innerHTML = `
+    <p class="tag" style="margin-bottom:14px;">Edit this follower's PnL and the linked trader's shared stats. Changes to trader ROI, win rate, followers and trades appear on that trader's public profile and all active copies.</p>
+    <label>Copy PnL (USDT)</label><input id="edit-copy-pnl" type="number" step="0.0001" value="${pnl}" />
+    <label>Trader 30-day ROI (%)</label><input id="edit-copy-roi" type="number" step="0.01" min="-100" max="1000" value="${roi}" />
+    <label>Trader win rate (%)</label><input id="edit-copy-winrate" type="number" step="0.1" min="0" max="100" value="${winRate}" />
+    <label>Trader followers</label><input id="edit-copy-followers" type="number" step="1" min="0" value="${followers}" />
+    <label>Trader total trades</label><input id="edit-copy-trades" type="number" step="1" min="0" value="${totalTrades}" />
+    <button style="width:100%;margin-top:12px;" onclick="saveEditActiveCopy('${id}')">Save changes</button>`;
+  openModal('edit-active-copy-modal');
+};
+
+window.saveEditActiveCopy = async id => {
+  const payload = {
+    pnl: Number(document.getElementById('edit-copy-pnl').value),
+    roi30d: Number(document.getElementById('edit-copy-roi').value),
+    winRate: Number(document.getElementById('edit-copy-winrate').value),
+    followers: Number(document.getElementById('edit-copy-followers').value),
+    totalTrades: Number(document.getElementById('edit-copy-trades').value)
+  };
+  try {
+    await api(`/api/copy/admin/relations/${id}/edit`, { method: 'POST', body: JSON.stringify(payload) });
+    closeModal('edit-active-copy-modal'); toast('Active copy and trader stats updated', 'success');
+    await Promise.all([loadCopyStats(), loadCopyRelations()]);
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+async function loadCopyPlatformFee() {
+  try {
+    const result = await api('/api/copy/admin/platform-fee');
+    const input = document.getElementById('copy-platform-fee');
+    if (input) input.value = Number(result.platformFeePercent).toFixed(2).replace(/\.00$/, '');
+  } catch (e) { console.warn('Could not load global copy platform fee:', e.message); }
+}
+
+window.saveCopyPlatformFee = async () => {
+  const input = document.getElementById('copy-platform-fee');
+  const fee = Number(input?.value);
+  if (!Number.isFinite(fee) || fee < 0 || fee > 20) return toast('Platform fee must be between 0 and 20%', 'warn');
+  try {
+    const result = await api('/api/copy/admin/platform-fee', { method: 'POST', body: JSON.stringify({ platformFeePercent: fee }) });
+    document.getElementById('copy-platform-fee-feedback').textContent = `Global platform fee set to ${result.platformFeePercent}%`;
+    toast('Global copy platform fee saved', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+};
 
 window.stopCopy = async (id) => {
   if (!confirm('Stop this copy relation? Funds return to the user.')) return;
@@ -426,7 +453,7 @@ window.populateCopyTraders = async (count = 100) => {
 const _origRefreshAll = refreshAll;
 refreshAll = async function () {
   await _origRefreshAll();
-  await Promise.all([loadCopyStats(), loadCopyRelations(), loadFeeStats()]);
+  await Promise.all([loadCopyStats(), loadCopyRelations(), loadFeeStats(), loadCopyPlatformFee()]);
   if (typeof refreshAdminTools === 'function') await refreshAdminTools();
 };
 
@@ -476,9 +503,9 @@ window.openAdjustFees = async (traderId, currentPerf, currentPlat, traderName) =
     <input id="perf-fee" type="number" min="0" max="50" value="${currentPerf}" />
     <p class="tag" style="margin-top: -6px; margin-bottom: 14px;">% of follower's profit paid to trader (0–50)</p>
 
-    <label>Platform Fee (%)</label>
+    <label>Legacy Trader Platform Fee (%)</label>
     <input id="plat-fee" type="number" min="0" max="20" value="${currentPlat}" />
-    <p class="tag" style="margin-top: -6px; margin-bottom: 14px;">% of follower's profit paid to platform (0–20)</p>
+    <p class="tag" style="margin-top: -6px; margin-bottom: 14px;">Fallback only. The Global Copy Platform Fee setting overrides this rate for new settlements.</p>
 
     <button style="width:100%" onclick="confirmAdjustFees('${traderId}')">Save Fees</button>
   `;

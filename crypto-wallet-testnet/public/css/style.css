@@ -1450,3 +1450,50 @@ html[data-theme="light"] .dropdown-header:hover {
 .market-strip-loading { padding:8px 0; font-size:12px; color:var(--text-mute); }
 @keyframes market-scroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
 @media (prefers-reduced-motion: reduce) { .market-strip-track.is-ready { animation:none; } }
+
+/* Copy trading profile and live-feeling demo board */
+.copy-demo-note { opacity: .82; }
+.copy-filters { margin-bottom: 18px; }
+.trader-card { cursor: pointer; transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+.trader-card:hover, .trader-card:focus-visible { transform: translateY(-3px); border-color: rgba(34,197,94,.45); box-shadow: 0 12px 30px rgba(0,0,0,.16); outline: none; }
+.trader-featured { border-color: rgba(74,222,128,.4); }
+.trader-card-head { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.trader-name { font-weight:700; font-size:16px; overflow:hidden; text-overflow:ellipsis; }
+.trader-bio { line-height:1.55; min-height:42px; margin-bottom:14px; }
+.trader-metrics { gap:10px; margin-bottom:14px; }
+.trader-metric { font-weight:750; font-size:16px; margin-top:3px; }
+.positive { color:var(--accent, #22c55e) !important; }
+.negative { color:#f87171 !important; }
+.trader-card-foot { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-top:1px solid var(--border); margin-bottom:10px; font-size:12px; color:var(--text-mute); }
+.trader-view-hint { display:block; text-align:center; margin-top:10px; }
+.copy-pagination { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin-top:20px; }
+.copy-active-row { margin-bottom:10px; }
+.copy-active-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.copy-pnl { font-size:17px; font-weight:750; }
+.copy-active-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:10px 0; border-top:1px solid var(--border); }
+.copy-active-metrics > div, .profile-stats > div { display:flex; flex-direction:column; gap:4px; }
+.copy-active-metrics b { font-size:14px; }
+.copy-fee-note { padding:10px 12px; background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.25); border-radius:10px; margin-bottom:14px; font-size:12px; line-height:1.5; }
+.copy-balance { display:flex; justify-content:space-between; padding:12px; background:rgba(148,163,184,.06); border-radius:10px; margin-bottom:14px; }
+.copy-profile-modal { max-width:760px !important; max-height:90vh; overflow:auto; }
+.profile-hero { display:flex; align-items:center; gap:12px; margin:4px 0 12px; }
+.profile-name { font-size:20px; font-weight:750; }
+.profile-bio { line-height:1.6; margin-bottom:16px; }
+.profile-stats { gap:12px; padding:14px; border:1px solid var(--border); border-radius:12px; margin-bottom:20px; }
+.profile-stats b { font-size:16px; }
+.profile-chart-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
+.profile-chart-head h4 { margin:0 0 4px; }
+.profile-range { display:flex; gap:5px; }
+.profile-range button.active { border-color:var(--accent); color:var(--accent); }
+.profile-chart-wrap { width:100%; min-height:220px; padding:8px 4px; border:1px solid var(--border); border-radius:12px; }
+.profile-chart-wrap canvas { display:block; width:100%; }
+.profile-disclaimer { display:block; margin-top:10px; line-height:1.5; }
+.leaderboard-top-item { text-align:center; padding:16px 12px; background:rgba(6,9,21,.4); border-radius:12px; border:1px solid var(--border); }
+.leaderboard-rest { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+@media (max-width:600px) {
+  .copy-active-metrics { grid-template-columns:1fr 1fr; }
+  .copy-active-head { align-items:flex-start; }
+  .profile-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .copy-profile-modal { padding:16px !important; }
+}
+@media (prefers-reduced-motion: reduce) { .trader-card { transition:none; } .trader-card:hover { transform:none; } }

@@ -15,6 +15,8 @@ const copyTraderSchema = new mongoose.Schema({
   performanceFee: { type: Number, default: 10 },
   platformFee:    { type: Number, default: 2 },
   totalEarned:    { type: Number, default: 0 },
+  isDemo:         { type: Boolean, default: true },
+  performanceHistory: [{ date: { type: Date, required: true }, roi30d: { type: Number, required: true } }],
 
   createdAt:   { type: Date, default: Date.now }
 });

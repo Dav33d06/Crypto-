@@ -97,6 +97,22 @@
     </div>
 
     <div class="card">
+      <h3>Global Copy Platform Fee</h3>
+      <p class="tag">This rate applies to eligible copy-trading profits platform-wide and overrides each trader's legacy platform fee. It is applied during the next fee settlement.</p>
+      <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;max-width:460px;">
+        <div style="flex:1;min-width:160px;"><label for="copy-platform-fee">Platform fee (%)</label><input id="copy-platform-fee" type="number" min="0" max="20" step="0.1" value="2" /></div>
+        <button onclick="saveCopyPlatformFee()">Save global fee</button>
+      </div>
+      <div id="copy-platform-fee-feedback" class="tag" style="margin-top:8px;"></div>
+    </div>
+    <div class="modal" id="edit-active-copy-modal">
+      <div class="modal-inner glass" style="max-width:520px;">
+        <div class="modal-head"><h3>Edit Active Copy</h3><button class="modal-close" onclick="closeModal('edit-active-copy-modal')">×</button></div>
+        <div id="edit-active-copy-body"></div>
+      </div>
+    </div>
+
+    <div class="card">
       <h3>Profit Sharing</h3>
       <div class="grid grid-3" id="fee-stats"></div>
       <h4 style="margin-top: 18px; font-size: 13px; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.08em;">Top Earning Traders</h4>
