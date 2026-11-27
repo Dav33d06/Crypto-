@@ -1,3 +1,4 @@
+(function () {
 const user = requireAuth();
 let balances = {};
 let quoteRequest = 0;
@@ -66,20 +67,33 @@ window.doSwap = async () => {
   if (!Number.isFinite(amount) || amount <= 0) return toast('Enter a valid amount', 'warn');
   if (from === to) return toast('Pick different currencies', 'warn');
   if (amount > Number(balances[from] || 0)) return toast(`Insufficient ${from} balance`, 'warn');
-  try {
-    const r = await api('/api/swap', { method: 'POST', body: JSON.stringify({ from, to, amount }) });
-    toast(`Swapped ${amount} ${from} → ${Number(r.swap.toAmount).toFixed(decimals(to))} ${to}`, 'success');
-    document.getElementById('from-amt').value = '';
-    await Promise.all([loadBalance(), loadHistory()]);
-    await updateQuote();
-  } catch (e) { toast(e.message, 'error'); }
+  const receive = document.getElementById('to-amt').value;
+  if (!receive) return toast('Waiting for a quote. Please try again in a moment.', 'warn');
+  const ok = await confirmAction({
+    title: 'Confirm swap',
+    message: 'The final amount may differ slightly if the market moves before execution.',
+    details: [['You pay', `${amount} ${from}`], ['You receive (est.)', `${receive} ${to}`], ['Rate', document.getElementById('rate-line').textContent], ['Fee (0.5%)', document.getElementById('fee-line').textContent]],
+    confirmText: 'Confirm swap'
+  });
+  if (!ok) return;
+  await withBusy(document.querySelector('button[onclick="doSwap()"]'), 'Swapping…', async () => {
+    try {
+      const r = await api('/api/swap', { method: 'POST', body: JSON.stringify({ from, to, amount }) });
+      toast(`Swapped ${amount} ${from} → ${Number(r.swap.toAmount).toFixed(decimals(to))} ${to}`, 'success');
+      document.getElementById('from-amt').value = '';
+      await Promise.all([loadBalance(), loadHistory()]);
+      await updateQuote();
+    } catch (e) { toast(e.message, 'error'); }
+  });
 };
 async function loadHistory() {
   const el = document.getElementById('history');
   el.innerHTML = '<div class="skeleton skeleton-row"></div>'.repeat(3);
   try {
     const swaps = await api('/api/swap/history');
-    if (!swaps.length) { el.innerHTML = '<div class="empty">No swaps yet.</div>'; return; }
+    if (!swaps.length) { el.innerHTML = emptyState('🔄', 'No swaps yet', 'Your completed swaps will appear here.'); return; }
     el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Pair</th><th>Amount</th><th>Received</th></tr></thead><tbody>${swaps.slice(0,10).map(s => `<tr><td>${new Date(s.createdAt).toLocaleString()}</td><td>${s.from} → ${s.to}</td><td>${Number(s.fromAmount).toFixed(decimals(s.from))} ${s.from}</td><td style="color:var(--accent);font-weight:600;">${Number(s.toAmount).toFixed(decimals(s.to))} ${s.to}</td></tr>`).join('')}</tbody></table></div>`;
-  } catch (e) { el.innerHTML = `<div class="empty">${String(e.message || 'Could not load swap history')}</div>`; }
+  } catch (e) { el.innerHTML = emptyState('⚠️', 'Could not load swap history', e.message || 'Please try again.'); }
 }
+
+})();

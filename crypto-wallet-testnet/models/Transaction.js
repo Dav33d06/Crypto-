@@ -19,6 +19,7 @@ const txSchema = new mongoose.Schema({
   address: { type: String, default: '' },
   network: { type: String, default: '' },
   txHash:  { type: String, default: '', index: true },
+  performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   confirmations: { type: Number, default: 0 },
   requiredConfirmations: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },

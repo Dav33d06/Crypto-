@@ -126,12 +126,20 @@ async function loadKycQueue() {
       el.innerHTML = '<div class="empty">No KYC submissions awaiting review</div>';
       return;
     }
-    el.innerHTML = pending.map(u => `
+    el.innerHTML = pending.map(u => {
+      const docs = u.kycDocuments || [];
+      const selfie = u.kycSelfie?.url ? u.kycSelfie : null;
+      const person = [u.firstName, u.lastName].filter(Boolean).join(' ');
+      const dob = u.dateOfBirth ? new Date(u.dateOfBirth).toLocaleDateString() : '';
+      const missing = [!docs.length ? 'ID document' : '', !selfie ? 'Selfie' : ''].filter(Boolean);
+      return `
       <div class="card" style="margin-bottom: 12px;">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom: 12px;">
           <div>
-            <div style="font-weight:700;">${u.username}</div>
-            <div class="tag">${u.email}</div>
+            <div style="font-weight:700;">${escHtml(u.username)}</div>
+            <div class="tag">${escHtml(u.email)}</div>
+            ${person || dob || u.country ? `<div class="tag">${[person && `Name: ${escHtml(person)}`, dob && `DOB: ${escHtml(dob)}`, u.country && `Country: ${escHtml(u.country)}`].filter(Boolean).join(' · ')}</div>` : ''}
+            ${missing.length ? `<div class="tag" style="color:#fbbf24;">⚠️ Missing: ${missing.join(', ')}</div>` : ''}
           </div>
           <div style="display:flex; gap:8px;">
             <button class="sm" onclick="approveKyc('${u._id}')">Verify</button>
@@ -139,18 +147,29 @@ async function loadKycQueue() {
           </div>
         </div>
         <div class="grid grid-2">
-          ${(u.kycDocuments || []).map(d => `
+          ${selfie ? `
+            <div class="doc-card">
+              <a href="${escHtml(selfie.url)}" target="_blank"><img src="${escHtml(selfie.url)}" class="doc-thumb" alt="Selfie" /></a>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:12px;font-weight:600;">Selfie</div>
+                <div class="tag">${selfie.uploadedAt ? new Date(selfie.uploadedAt).toLocaleString() : ''}</div>
+              </div>
+            </div>` : ''}
+          ${docs.map(d => `
             <div class="doc-card">
               ${d.mimetype.startsWith('image/')
-                ? `<a href="${d.url}" target="_blank"><img src="${d.url}" class="doc-thumb" /></a>`
-                : `<a href="${d.url}" target="_blank" class="doc-thumb doc-file">📄<div class="tag">${d.filename.split('.').pop().toUpperCase()}</div></a>`}
+                ? `<a href="${escHtml(d.url)}" target="_blank"><img src="${escHtml(d.url)}" class="doc-thumb" alt="ID document" /></a>`
+                : `<a href="${escHtml(d.url)}" target="_blank" class="doc-thumb doc-file">📄<div class="tag">${escHtml(d.filename.split('.').pop().toUpperCase())}</div></a>`}
               <div style="flex:1; min-width:0;">
-                <div style="font-size:12px; word-break:break-all;">${d.filename}</div>
+                <div style="font-size:12px;font-weight:600;">ID document</div>
+                <div style="font-size:12px; word-break:break-all;">${escHtml(d.filename)}</div>
                 <div class="tag">${(d.size/1024).toFixed(0)} KB</div>
               </div>
-            </div>`).join('') || '<div class="empty">No documents</div>'}
+            </div>`).join('')}
+          ${!selfie && !docs.length ? '<div class="empty">Nothing uploaded yet</div>' : ''}
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -238,7 +257,7 @@ async function loadMaintenance() {
 window.credit = async (id) => {
   const amount = Number(prompt('Balance adjustment in USDT (positive to credit, negative to debit)', '10'));
   if (!Number.isFinite(amount) || amount === 0) return;
-  const reason = prompt('Reason for this adjustment (required)', 'Development balance correction');
+  const reason = prompt('Reason for this adjustment (required)', 'Balance correction');
   if (!reason || reason.trim().length < 5) return toast('A reason of at least 5 characters is required', 'warn');
   try {
     await api(`/api/admin/users/${id}/balance`, { method: 'POST', body: JSON.stringify({ currency: 'USDT', amount, reason }) });

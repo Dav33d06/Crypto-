@@ -20,7 +20,7 @@ const { notify } = require('../middleware/notify');
 const router = express.Router();
 router.use(auth, adminOnly);
 
-const safeUserFields = 'username email role displayName country kycStatus kycDocuments kycSelfie balances locked isBanned createdAt lastLogin';
+const safeUserFields = 'username email role displayName country kycStatus kycDocuments kycSelfie firstName lastName dateOfBirth balances locked isBanned createdAt lastLogin';
 const ADMIN_ASSETS = ['USDT','BTC','ETH','SOL','BNB','XRP','ADA','DOGE','LTC','TRX','DOT','AVAX','LINK','BCH','TON','NEAR','ATOM','UNI'];
 const pageArgs = req => ({ page: Math.max(1, parseInt(req.query.page, 10) || 1), limit: Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20)) });
 
@@ -89,7 +89,7 @@ router.patch('/users/:id/wallet-addresses', async (req, res) => {
       if (item.address && ['ERC20','BEP20'].includes(item.network))
         addAddressesToWebhook(item.network, [item.address.toLowerCase()]).catch(() => {});
     }
-    await notify(user._id, 'system', 'Wallet deposit address updated', `Your deposit address settings were updated by an administrator. Please verify the network and address shown in your wallet before sending funds.`).catch(() => {});
+    await notify(user._id, 'system', 'Wallet deposit address updated', `Your deposit address has been updated. Please verify the network and address shown in your wallet before sending funds.`).catch(() => {});
     res.json({ ok: true, changed });
   } catch (e) { res.status(500).json({ error: 'Could not update wallet addresses' }); }
 });
@@ -111,7 +111,7 @@ router.post('/users/:id/balance', async (req, res) => {
       const user = await User.findById(req.params.id).session(session); if (!user) throw new Error('User not found');
       const current = Number(user.balances?.[currency] || 0); if (current + amount < -1e-8) throw new Error('Adjustment would make balance negative');
       user.set(`balances.${currency}`, Number((current + amount).toFixed(12))); await user.save({ session });
-      await Transaction.create([{ user: user._id, type: 'earn', category: 'admin_adjustment', direction: amount > 0 ? 'credit' : 'debit', currency, amount: Math.abs(amount), status: 'completed', note: `Admin adjustment (${req.user.username}): ${reason}` }], { session });
+      await Transaction.create([{ user: user._id, type: 'earn', category: 'admin_adjustment', direction: amount > 0 ? 'credit' : 'debit', currency, amount: Math.abs(amount), status: 'completed', note: `Balance adjustment: ${reason}`, performedBy: req.user._id }], { session });
       result = { username: user.username, balance: user.balances.get ? user.balances.get(currency) : user.balances[currency] };
     });
     await notify(req.params.id, 'system', 'Balance updated', `${amount > 0 ? '+' : ''}${amount} ${currency}: ${reason}`).catch(() => {});
@@ -271,9 +271,9 @@ router.post('/positions/:id/close', async (req, res) => {
     const pos = await Position.findOne({ _id: req.params.id, amount: { $gt: 0 } });
     if (!pos) return res.status(404).json({ error: 'Open position not found' });
     const orderRoutes = require('./orders');
-    const result = await orderRoutes.closePositionAtomic(pos._id, pos.user, closePrice, 'Admin');
+    const result = await orderRoutes.closePositionAtomic(pos._id, pos.user, closePrice, 'Manual', req.user._id);
     if (!result) return res.status(409).json({ error: 'Position already closed' });
-    await notify(pos.user, 'system', 'Position closed by administrator', `${pos.pair} closed at ${closePrice}; realized PnL ${result.pnl} ${result.quote}`).catch(() => {});
+    await notify(pos.user, 'system', 'Position closed', `Your ${pos.pair} position was closed at ${closePrice}. Realized PnL: ${result.pnl} ${result.quote}`).catch(() => {});
     res.json({ closed: true, closePrice, ...result });
   } catch (e) { res.status(500).json({ error: e.message || 'Could not close position' }); }
 });

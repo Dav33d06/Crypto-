@@ -3,30 +3,51 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Copy Trading — NovaWallet</title>
+<title>Earn — NovaWallet</title>
 <script src="/js/theme.js"></script>
 <link rel="stylesheet" href="/css/style.css" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<meta name="theme-color" content="#060915" />
+<meta name="robots" content="noindex" />
 </head>
 <body>
   <div class="nav glass">
-    <div class="brand"><div class="brand-logo">₮</div><span>Nova<span class="brand-accent">Wallet</span></span></div>
-    <div class="nav-links">
-      <a href="/dashboard.html" class="nav-link">Dashboard</a>
-      <a href="/portfolio.html" class="nav-link">Portfolio</a>
-      <a href="/orders.html" class="nav-link">Trade</a>
-      <a href="/copy.html" class="nav-link active">Copy</a>
-      <a href="/staking.html" class="nav-link">Stake</a>
-      <a href="/wallet.html" class="nav-link">Wallet</a>
-      <a href="/profile.html" class="nav-link">Profile</a>
-      <div class="theme-toggle" data-action="toggle-theme">🌓</div>
-      <a href="#" data-action="logout" class="nav-link">Logout</a>
-    </div>
+    <a href="/dashboard.html" class="brand" style="text-decoration:none;color:inherit;"><div class="brand-logo">₮</div><span>Nova<span class="brand-accent">Wallet</span></span></a>
+    <div class="nav-links"></div>
   </div>
 
   <div class="container">
-    <h2>Copy Trading</h2>
-    <p class="tag" style="margin-bottom: 8px;">Follow trader profiles and track their changing performance.</p>
-    <p class="tag copy-demo-note" style="margin-bottom:20px;">Demo environment: trader ROI, follower activity and performance history are simulated. Copy positions are not connected to an external exchange.</p>
+    <h2>Earn</h2>
+    <div class="tab-bar" role="tablist">
+      <button class="tab-btn" role="tab" data-tab="staking">Staking</button>
+      <button class="tab-btn" role="tab" data-tab="copy">Copy trading</button>
+    </div>
+    <section class="tab-pane" data-pane="staking">
+
+    <p class="tag" style="margin-bottom: 22px;">Lock your USDT and earn passive yield with institutional-grade plans.</p>
+
+    <div class="card">
+      <h3>Choose a plan</h3>
+      <div class="grid grid-3" id="plans" style="margin-top: 12px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Stake amount</h3>
+      <label>Amount (USDT)</label>
+      <input id="stake-amount" type="number" placeholder="100" min="1" />
+      <p class="tag" style="margin-top: -6px; margin-bottom: 14px;">Available: <span id="avail">0.00</span> USDT</p>
+      <button onclick="createStake()">Stake Now</button>
+    </div>
+
+    <div class="card">
+      <h3>My positions</h3>
+      <div id="stakes"></div>
+    </div>
+
+    </section>
+    <section class="tab-pane" data-pane="copy">
+
+    <p class="tag" style="margin-bottom:20px;">Follow top traders and share in their performance. Performance and platform fees apply to profits.</p>
 
     <div class="card" style="background: linear-gradient(135deg, rgba(74,222,128,.08), rgba(34,211,238,.04)); border-color: rgba(74,222,128,.3);">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 14px;">
@@ -54,9 +75,11 @@
     </div>
     <div class="grid grid-2" id="traders"></div>
     <div id="pagination"></div>
+
+    </section>
   </div>
 
-  <div class="modal" id="follow-modal">
+<div class="modal" id="follow-modal">
     <div class="modal-inner glass">
       <div class="modal-head">
         <h3 id="follow-title">Follow Trader</h3>
@@ -73,9 +96,13 @@
     </div>
   </div>
 
+  
   <script src="/js/ui.js"></script>
   <script src="/js/auth.js"></script>
+  <script src="/js/prices.js"></script>
   <script src="/js/notifications.js"></script>
+  <script src="/js/staking.js"></script>
   <script src="/js/copy.js"></script>
+  <script src="/js/footer.js"></script>
 </body>
 </html>

@@ -1,3 +1,4 @@
+(function () {
 const user = requireAuth();
 let allTraders = [];
 let userBalance = 0;
@@ -5,16 +6,30 @@ let currentPage = 1;
 const PER_PAGE = 20;
 let profileTraderId = null;
 let profileHistoryDays = 30;
+let platformFeePercent = null;
+let lastTradersSig = '';
+
+// Only touch the DOM when the rendered markup actually changed (prevents flicker on refresh).
+const setHTML = (el, html) => { if (!el || el._last === html) return false; el.innerHTML = html; el._last = html; return true; };
 
 const safeText = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const fmt = value => Number(value || 0).toFixed(2);
+const fmtMoney = value => Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 if (user) document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
-  await Promise.all([loadBalance(), loadTraders(), loadMyCopies(), loadLeaderboard()]);
-  // Keep the board feeling current while reflecting server-side simulated performance updates.
-  setInterval(() => { loadTraders(); loadMyCopies(); loadLeaderboard(); }, 30000);
+  await Promise.all([loadBalance(), loadFees(), loadTraders(), loadMyCopies(), loadLeaderboard()]);
+  setInterval(() => {
+    if (document.hidden) return;
+    if (document.querySelector('.modal.open')) return;
+    if (document.getElementById('traders')?.matches(':hover')) return;
+    loadTraders(); loadMyCopies(); loadLeaderboard();
+  }, 30000);
+}
+
+async function loadFees() {
+  try { const f = await api('/api/copy/fees'); platformFeePercent = f.platformFeePercent; } catch {}
 }
 
 async function loadBalance() {
@@ -24,8 +39,12 @@ async function loadBalance() {
 async function loadTraders() {
   const el = document.getElementById('traders');
   if (!allTraders.length && el) el.innerHTML = '<div class="skeleton skeleton-card"></div>'.repeat(4);
-  try { allTraders = await api('/api/copy'); applyFilters(false); }
-  catch (e) { if (el) el.innerHTML = '<div class="empty">Could not load traders</div>'; toast(e.message, 'error'); }
+  try {
+    const data = await api('/api/copy');
+    const sig = JSON.stringify(data);
+    if (sig === lastTradersSig && allTraders.length) return;
+    lastTradersSig = sig; allTraders = data; applyFilters(false);
+  } catch (e) { if (el && !allTraders.length) el.innerHTML = '<div class="empty">Could not load traders</div>'; toast(e.message, 'error'); }
 }
 
 window.applyFilters = (resetPage = true) => {
@@ -48,9 +67,9 @@ window.applyFilters = (resetPage = true) => {
   const countEl = document.getElementById('traders-count');
   if (countEl) countEl.textContent = `${list.length} traders · page ${currentPage} of ${totalPages}`;
   if (!el) return;
-  if (!pageItems.length) { el.innerHTML = '<div class="empty">No traders match your filter</div>'; document.getElementById('pagination').innerHTML = ''; return; }
+  if (!pageItems.length) { el._last = null; el.innerHTML = '<div class="empty">No traders match your filter</div>'; document.getElementById('pagination').innerHTML = ''; return; }
 
-  el.innerHTML = pageItems.map(t => `
+  const gridHTML = pageItems.map(t => `
     <article class="card trader-card ${t.featured ? 'trader-featured' : ''}" role="button" tabindex="0"
       aria-label="View ${safeText(t.displayName)} profile" onclick="openTraderProfile('${t._id}')"
       onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTraderProfile('${t._id}');}">
@@ -64,10 +83,12 @@ window.applyFilters = (resetPage = true) => {
         <div><div class="tag">Win rate</div><div class="trader-metric">${fmt(t.winRate)}%</div></div>
         <div><div class="tag">Followers</div><div class="trader-metric">${Number(t.followers || 0).toLocaleString()}</div></div>
       </div>
+      <div class="trader-card-foot"><span>Total earned</span><b>${fmtMoney(t.totalEarned)} USDT</b></div>
       <div class="trader-card-foot"><span>Performance fee</span><b>${Number(t.performanceFee ?? 10)}%</b></div>
       <button style="width:100%" onclick="event.stopPropagation();openFollow('${t._id}')">Copy this trader</button>
-      <div class="tag trader-view-hint">Click card to view full profile and performance history →</div>
+      <div class="tag trader-view-hint">View profile &amp; performance history →</div>
     </article>`).join('');
+  setHTML(el, gridHTML);
   renderPagination(totalPages);
 };
 
@@ -90,8 +111,8 @@ async function loadMyCopies() {
   const el = document.getElementById('my-copies'); if (!el) return;
   try {
     const list = await api('/api/copy/my');
-    if (!list.length) { el.innerHTML = '<div class="empty">You are not copying anyone yet</div>'; return; }
-    el.innerHTML = list.map(r => {
+    if (!list.length) { setHTML(el, '<div class="empty">You are not copying anyone yet</div>'); return; }
+    setHTML(el, list.map(r => {
       const traderRoi = Number(r.trader?.roi30d || 0);
       const pnl = Number(r.pnl || 0);
       return `<div class="task copy-active-row" style="flex-direction:column;align-items:stretch;gap:10px;">
@@ -101,7 +122,7 @@ async function loadMyCopies() {
           <div><span class="tag">Win rate</span><b>${fmt(r.trader?.winRate)}%</b></div><div><span class="tag">Followers</span><b>${Number(r.trader?.followers || 0).toLocaleString()}</b></div></div>
         <button class="danger sm" onclick="unfollow('${r._id}')" style="align-self:flex-start;">Stop copying</button>
       </div>`;
-    }).join('');
+    }).join(''));
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -122,17 +143,38 @@ window.openTraderProfile = async traderId => {
         <div><span class="tag">Followers</span><b>${Number(t.followers || 0).toLocaleString()}</b></div>
         <div><span class="tag">Total trades</span><b>${Number(t.totalTrades || 0).toLocaleString()}</b></div>
         <div><span class="tag">Performance fee</span><b>${Number(t.performanceFee ?? 10)}%</b></div>
-        <div><span class="tag">Total earned</span><b>${fmt(t.totalEarned)} USDT</b></div>
-        <div><span class="tag">Member since</span><b>${t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}</b></div>
+        <div><span class="tag">Total earned</span><b class="live-earned" data-live="earned">${fmtMoney(t.totalEarned)} USDT</b></div>
+        <div><span class="tag">Earned today</span><b class="live-earned positive" data-live="today">+${fmtMoney(t.earnedToday)} USDT</b></div>
+        <div><span class="tag">Risk score</span><b class="risk-${String(t.riskLevel || 'Medium').toLowerCase()}">${Number(t.riskScore || 0)}/10 · ${safeText(t.riskLevel || '—')}</b></div>
       </div>
-      <div class="profile-chart-head"><div><h4>Performance history</h4><span class="tag">Daily 30-day ROI snapshots · simulated demo data</span></div>
+      <div class="profile-chart-head"><div><h4>Performance history</h4><span class="tag">Daily 30-day ROI snapshots</span></div>
         <div class="profile-range"><button class="secondary sm active" data-days="30" onclick="loadTraderHistory(30)">30D</button><button class="secondary sm" data-days="90" onclick="loadTraderHistory(90)">90D</button><button class="secondary sm" data-days="180" onclick="loadTraderHistory(180)">180D</button></div></div>
       <div class="profile-chart-wrap"><canvas id="trader-history-chart" height="220"></canvas></div>
-      <div class="tag profile-disclaimer">Performance figures on this demo platform are simulated and are not audited or a promise of future returns.</div>
+      <div class="tag profile-disclaimer">Past performance is not a guarantee of future results. Risk score (1–10) reflects volatility, drawdown and win rate. Copy trading involves risk, including loss of your allocation.</div>
       <button style="width:100%;margin-top:14px;" onclick="closeModal('trader-profile-modal');openFollow('${t._id}')">Copy this trader</button>`;
     await loadTraderHistory(30);
+    startProfileLive(traderId);
   } catch (e) { document.getElementById('trader-profile-body').innerHTML = `<div class="empty">${safeText(e.message)}</div>`; }
 };
+
+/* Keeps the earnings figures in an open profile moving */
+let profileLiveTimer = null;
+function startProfileLive(traderId) {
+  clearInterval(profileLiveTimer);
+  profileLiveTimer = setInterval(async () => {
+    const open = document.getElementById('trader-profile-modal')?.classList.contains('open');
+    if (!open || profileTraderId !== traderId) { clearInterval(profileLiveTimer); return; }
+    try {
+      const t = await api(`/api/copy/${traderId}/profile`);
+      const set = (key, text) => {
+        const el = document.querySelector(`[data-live="${key}"]`);
+        if (el && el.textContent !== text) { el.textContent = text; el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); }
+      };
+      set('earned', `${fmtMoney(t.totalEarned)} USDT`);
+      set('today', `+${fmtMoney(t.earnedToday)} USDT`);
+    } catch {}
+  }, 10000);
+}
 
 window.loadTraderHistory = async days => {
   if (!profileTraderId) return;
@@ -164,35 +206,62 @@ function drawTraderHistory(points) {
 
 window.openFollow = traderId => {
   const t = allTraders.find(x => x._id === traderId); if (!t) return;
+  const perfFee = Number(t.performanceFee ?? 0);
+  const platFee = Number(platformFeePercent ?? t.platformFee ?? 0);
   document.getElementById('follow-title').textContent = `Copy ${t.displayName}`;
   document.getElementById('follow-body').innerHTML = `
-    <p class="tag" style="margin-bottom:14px;">Allocate USDT to mirror ${safeText(t.displayName)}'s simulated performance. You can stop anytime.</p>
-    <div class="copy-fee-note">⚠️ <b>Performance fee: ${Number(t.performanceFee || 10)}%</b> of eligible profits. Platform fee may also apply.</div>
+    <p class="tag" style="margin-bottom:14px;">Allocate USDT to copy ${safeText(t.displayName)}. You can stop copying at any time.</p>
+    <div class="copy-fee-note">⚠️ Fees are charged on profits only: <b>${perfFee}% performance fee</b> (paid to the trader) and <b>${platFee}% platform fee</b>.</div>
     <div class="copy-balance"><span class="tag">Your balance</span><b>${userBalance.toFixed(2)} USDT</b></div>
     <label>Allocation (USDT)</label><input id="copy-amount" type="number" min="10" placeholder="100" />
-    <p class="tag">Minimum 10 USDT</p><button style="width:100%" onclick="confirmFollow('${t._id}')">Start copying</button>`;
+    <p class="tag">Minimum 10 USDT</p><button id="copy-confirm-btn" style="width:100%" onclick="confirmFollow('${t._id}')">Start copying</button>`;
   openModal('follow-modal');
 };
 
 window.confirmFollow = async traderId => {
+  const btn = document.getElementById('copy-confirm-btn');
+  if (btn?.disabled) return;
   const amt = Number(document.getElementById('copy-amount').value);
   if (!amt || amt < 10) return toast('Minimum allocation is 10 USDT', 'warn');
-  try { await api(`/api/copy/follow/${traderId}`, { method: 'POST', body: JSON.stringify({ allocation: amt }) }); closeModal('follow-modal'); toast('You are now copying this trader', 'success'); await Promise.all([loadBalance(), loadMyCopies(), loadTraders()]); }
-  catch (e) { toast(e.message, 'error'); }
+  if (amt > userBalance) return toast('Insufficient USDT balance', 'warn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  try {
+    await api(`/api/copy/follow/${traderId}`, { method: 'POST', body: JSON.stringify({ allocation: amt }) });
+    closeModal('follow-modal'); toast('You are now copying this trader', 'success');
+    await Promise.all([loadBalance(), loadMyCopies(), loadTraders()]);
+  } catch (e) {
+    toast(e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Start copying'; }
+  }
 };
 
+let unfollowing = false;
 window.unfollow = async relId => {
-  if (!confirm('Stop copying this trader? Your allocation + PnL returns to your wallet.')) return;
-  try { await api(`/api/copy/unfollow/${relId}`, { method: 'POST' }); toast('Stopped copying', 'success'); await Promise.all([loadBalance(), loadMyCopies()]); }
-  catch (e) { toast(e.message, 'error'); }
+  if (unfollowing) return;
+  const ok = await confirmAction({
+    title: 'Stop copying this trader?',
+    message: 'Your allocation and PnL, less any outstanding performance fees, will be returned to your wallet.',
+    confirmText: 'Stop copying', danger: true
+  });
+  if (!ok) return;
+  unfollowing = true;
+  try {
+    await api(`/api/copy/unfollow/${relId}`, { method: 'POST' });
+    toast('Stopped copying', 'success');
+    await Promise.all([loadBalance(), loadMyCopies()]);
+  } catch (e) { toast(e.message, 'error'); }
+  finally { unfollowing = false; }
 };
 
+/* ============ LEADERBOARD ============ */
 async function loadLeaderboard() {
   const weekEl = document.getElementById('leaderboard-week'), topEl = document.getElementById('leaderboard-top');
   if (!weekEl || !topEl) return;
   try {
     const r = await api('/api/leaderboard/current'); weekEl.textContent = r.weekId;
     const medals = ['🥇', '🥈', '🥉'], top3 = r.entries.slice(0, 3), rest = r.entries.slice(3);
-    topEl.innerHTML = `<div class="grid grid-3" style="margin-bottom:14px;">${top3.map((t, i) => `<div class="leaderboard-top-item"><div style="font-size:32px;">${medals[i]}</div><div style="font-weight:700;">${safeText(t.displayName)}</div><div class="tag">${safeText(t.tier)}</div><div class="positive" style="font-weight:700;margin-top:6px;">${t.roi30d >= 0 ? '+' : ''}${fmt(t.roi30d)}%</div></div>`).join('')}</div>${rest.length ? `<div class="leaderboard-rest">${rest.map(t => `<div class="net-chip"><span class="positive">#${t.rank}</span> ${safeText(t.displayName)} <span class="tag">${t.roi30d >= 0 ? '+' : ''}${fmt(t.roi30d)}%</span></div>`).join('')}</div>` : ''}`;
+    setHTML(topEl, `<div class="grid grid-3" style="margin-bottom:14px;">${top3.map((t, i) => `<div class="leaderboard-top-item"><div style="font-size:32px;">${medals[i]}</div><div style="font-weight:700;">${safeText(t.displayName)}</div><div class="tag">${safeText(t.tier)}</div><div class="positive" style="font-weight:700;margin-top:6px;">${t.roi30d >= 0 ? '+' : ''}${fmt(t.roi30d)}%</div></div>`).join('')}</div>${rest.length ? `<div class="leaderboard-rest">${rest.map(t => `<div class="net-chip"><span class="positive">#${t.rank}</span> ${safeText(t.displayName)} <span class="tag">${t.roi30d >= 0 ? '+' : ''}${fmt(t.roi30d)}%</span></div>`).join('')}</div>` : ''}`);
   } catch (e) { console.warn('Leaderboard failed:', e.message); }
 }
+
+})();

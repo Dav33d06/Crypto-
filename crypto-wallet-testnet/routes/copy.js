@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const multer = require('multer');
 const CopyTrader = require('../models/CopyTrader');
 const CopyRelation = require('../models/CopyRelation');
@@ -6,7 +7,84 @@ const User = require('../models/User');
 const Settings = require('../models/Settings');
 const { auth } = require('../middleware/auth');
 const { notify } = require('../middleware/notify');
+const { round, getPlatformRate, calcFees, recordFees } = require('../utils/copyFees');
 const router = express.Router();
+
+
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+async function withTxn(fn) {
+  const session = await mongoose.startSession();
+  try {
+    let out;
+    await session.withTransaction(async () => { out = await fn(session); });
+    return out;
+  } finally { await session.endSession(); }
+}
+
+function sendError(res, e, fallback) {
+  if (e instanceof HttpError) return res.status(e.status).json({ error: e.message });
+  if (e.name === 'CastError') return res.status(404).json({ error: 'Not found' });
+  if (e.code === 11000) return res.status(400).json({ error: 'Already following' });
+  console.error('copy route error:', e.message);
+  return res.status(500).json({ error: fallback });
+}
+
+/* Risk score (1–10) from volatility and drawdown of the ROI history plus win rate. */
+function computeRisk(t) {
+  const h = (t.performanceHistory || []).map(p => Number(p.roi30d)).filter(Number.isFinite);
+  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  const win = Number(t.winRate || 0);
+  const winPts = win >= 65 ? 0 : win >= 55 ? 1 : win >= 45 ? 1.5 : 2;
+  let total;
+  if (h.length >= 10) {
+    const d = []; for (let i = 1; i < h.length; i++) d.push(h[i] - h[i - 1]);
+    const mean = d.reduce((a, b) => a + b, 0) / d.length;
+    const vol = Math.sqrt(d.reduce((a, b) => a + (b - mean) ** 2, 0) / d.length);
+    let peak = h[0], dd = 0;
+    for (const v of h) { peak = Math.max(peak, v); dd = Math.max(dd, peak - v); }
+    total = clamp(vol / 2 * 4, 0, 4) + clamp(dd / 30 * 4, 0, 4) + winPts;
+  } else {
+    const roi = Number(t.roi30d || 0);
+    total = 2 + winPts + (roi < 0 ? 2 : 0) + (Math.abs(roi) > 50 ? 2 : 0);
+  }
+  const score = clamp(Math.round(1 + total * 0.9), 1, 10);
+  return { riskScore: score, riskLevel: score <= 3 ? 'Low' : score <= 6 ? 'Medium' : 'High' };
+}
+
+/* Stops an active copy: settles any unpaid performance fee, returns allocation + PnL (less fees)
+   to the follower's wallet. Atomic, and a copy can only ever be stopped once. */
+async function stopCopy(relationId, followerId) {
+  return withTxn(async session => {
+    const filter = { _id: relationId, active: true };
+    if (followerId) filter.follower = followerId;
+    const rel = await CopyRelation.findOne(filter).session(session);
+    if (!rel) throw new HttpError(404, 'This copy was not found or has already been stopped');
+    const trader = await CopyTrader.findById(rel.trader).session(session);
+    const fees = trader ? calcFees(rel, trader, await getPlatformRate(trader, session)) : { newProfit: 0, traderFee: 0, platformFee: 0, total: 0 };
+    const payout = Math.max(0, round(Number(rel.allocation || 0) + Number(rel.pnl || 0) - fees.total));
+
+    await CopyRelation.updateOne({ _id: rel._id }, { $set: { active: false } }, { session });
+    if (trader && fees.total > 0) await recordFees({ session, rel, trader, fees });
+
+    const user = await User.findById(rel.follower).session(session);
+    if (!user) throw new HttpError(404, 'User not found');
+    user.set('locked.USDT', Math.max(0, round(Number(user.locked?.USDT || 0) - Number(rel.allocation || 0))));
+    user.set('balances.USDT', round(Number(user.balances?.USDT || 0) + payout));
+    await user.save({ session });
+
+    if (trader) await CopyTrader.updateOne({ _id: trader._id, followers: { $gt: 0 } }, { $inc: { followers: -1 } }, { session });
+    return { userId: rel.follower, payout, fees, traderName: trader?.displayName || 'trader' };
+  });
+}
+
+async function notifyStopped(r) {
+  const feeNote = r.fees.total > 0 ? ` after ${r.fees.total.toFixed(2)} USDT in fees` : '';
+  await notify(r.userId, 'system', 'Copy trading stopped',
+    `${r.payout.toFixed(2)} USDT returned to your wallet${feeNote}`).catch(() => {});
+}
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -19,17 +97,27 @@ router.get('/', auth, async (req, res) => {
 /* GET my copy relations */
 router.get('/my', auth, async (req, res) => {
   const relations = await CopyRelation.find({ follower: req.user._id, active: true })
-    .populate('trader', 'displayName bio tier roi30d winRate followers totalTrades performanceFee platformFee featured isDemo');
+    .populate('trader', 'displayName bio tier roi30d winRate followers totalTrades performanceFee platformFee featured');
   res.json(relations);
 });
 
-/* Trader profile and historical ROI. These are demo/simulated profiles, not verified live track records. */
+/* Platform fee shown to followers before they start copying. */
+router.get('/fees', auth, async (req, res) => {
+  try {
+    const setting = await Settings.findOne({ key: 'copyPlatformFeePercent' }).lean();
+    res.json({ platformFeePercent: setting && Number.isFinite(Number(setting.value)) ? Number(setting.value) : null });
+  } catch (e) { res.status(500).json({ error: 'Could not load fees' }); }
+});
+
+/* Trader profile with risk score. */
 router.get('/:id/profile', auth, async (req, res) => {
   try {
     const trader = await CopyTrader.findOne({ _id: req.params.id, active: true })
-      .select('displayName bio tier roi30d winRate followers totalTrades performanceFee platformFee featured totalEarned createdAt isDemo');
+      .select('displayName bio tier roi30d winRate followers totalTrades performanceFee platformFee featured totalEarned earnedToday performanceHistory').lean();
     if (!trader) return res.status(404).json({ error: 'Trader not found' });
-    res.json(trader);
+    const risk = computeRisk(trader);
+    delete trader.performanceHistory;
+    res.json({ ...trader, ...risk });
   } catch (e) { res.status(400).json({ error: 'Invalid trader' }); }
 });
 
@@ -41,84 +129,60 @@ router.get('/:id/history', auth, async (req, res) => {
     const since = new Date(); since.setDate(since.getDate() - days + 1);
     let points = (trader.performanceHistory || []).filter(p => new Date(p.date) >= since).map(p => ({ date: p.date, roi: p.roi30d }));
     if (!points.length) points = [{ date: new Date(), roi: trader.roi30d }];
-    res.json({ days, points, simulated: true });
+    res.json({ days, points });
   } catch (e) { res.status(400).json({ error: 'Could not load trader history' }); }
 });
 
-/* POST follow a trader */
+/* POST follow a trader — balance check, debit and relation are one atomic transaction */
 router.post('/follow/:traderId', auth, async (req, res) => {
   try {
-    const { allocation } = req.body;
-    const amt = Number(allocation);
-    if (!amt || amt < 10) return res.status(400).json({ error: 'Minimum allocation is 10 USDT' });
+    const amt = round(req.body.allocation);
+    if (!Number.isFinite(amt) || amt < 10) return res.status(400).json({ error: 'Minimum allocation is 10 USDT' });
+    if (amt > 1e9) return res.status(400).json({ error: 'Invalid allocation' });
 
-    const trader = await CopyTrader.findById(req.params.traderId);
-    if (!trader || !trader.active) return res.status(404).json({ error: 'Trader not found' });
+    const { relation, trader } = await withTxn(async session => {
+      const trader = await CopyTrader.findOne({ _id: req.params.traderId, active: true }).session(session);
+      if (!trader) throw new HttpError(404, 'Trader not found');
 
-    const existing = await CopyRelation.findOne({ follower: req.user._id, trader: trader._id });
-    if (existing && existing.active) return res.status(400).json({ error: 'Already following' });
+      const existing = await CopyRelation.findOne({ follower: req.user._id, trader: trader._id }).session(session);
+      if (existing && existing.active) throw new HttpError(400, 'Already following');
 
-    const user = await User.findById(req.user._id);
-    if (user.balances.USDT < amt) return res.status(400).json({ error: 'Insufficient USDT' });
+      const debit = await User.updateOne(
+        { _id: req.user._id, 'balances.USDT': { $gte: amt } },
+        { $inc: { 'balances.USDT': -amt, 'locked.USDT': amt } }, { session });
+      if (!debit.modifiedCount) throw new HttpError(400, 'Insufficient USDT');
 
-    user.balances.USDT -= amt;
-    user.locked.USDT = (user.locked.USDT || 0) + amt;
-    await user.save();
+      let relation;
+      if (existing) {
+        await CopyRelation.updateOne({ _id: existing._id }, { $set: {
+          allocation: amt, active: true, autoCopy: true, pnl: 0, highWaterMark: 0, lastTraderRoi: trader.roi30d
+        } }, { session });
+        relation = await CopyRelation.findById(existing._id).session(session);
+      } else {
+        [relation] = await CopyRelation.create([{
+          follower: req.user._id, trader: trader._id, allocation: amt, lastTraderRoi: trader.roi30d
+        }], { session });
+      }
+      await CopyTrader.updateOne({ _id: trader._id }, { $inc: { followers: 1 } }, { session });
+      return { relation, trader };
+    });
 
-    let relation;
-    if (existing) {
-      existing.allocation = amt;
-      existing.active = true;
-      existing.autoCopy = true;
-      existing.pnl = 0;
-      existing.highWaterMark = 0;
-      existing.lastTraderRoi = trader.roi30d;
-      relation = await existing.save();
-    } else {
-      relation = await CopyRelation.create({
-        follower: user._id, trader: trader._id, allocation: amt, lastTraderRoi: trader.roi30d
-      });
-    }
-
-    trader.followers += 1;
-    await trader.save();
-
-    await notify(user._id, 'system', 'Copy trading started',
-      `Following ${trader.displayName} with ${amt} USDT`);
-
+    await notify(req.user._id, 'system', 'Copy trading started',
+      `You are now copying ${trader.displayName} with ${amt} USDT`).catch(() => {});
     res.json(relation);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { sendError(res, e, 'Could not start copying. Please try again.'); }
 });
 
-/* POST unfollow */
+/* POST unfollow — settles any outstanding performance fee, then returns funds exactly once */
 router.post('/unfollow/:relationId', auth, async (req, res) => {
   try {
-    const rel = await CopyRelation.findOne({
-      _id: req.params.relationId,
-      follower: req.user._id
-    }).populate('trader');
-    if (!rel) return res.status(404).json({ error: 'Not found' });
-
-    const user = await User.findById(req.user._id);
-    user.locked.USDT = Math.max(0, (user.locked.USDT || 0) - rel.allocation);
-    user.balances.USDT += rel.allocation + (rel.pnl || 0);
-    await user.save();
-
-    rel.active = false;
-    await rel.save();
-
-    if (rel.trader) {
-      rel.trader.followers = Math.max(0, rel.trader.followers - 1);
-      await rel.trader.save();
-    }
-
-    await notify(user._id, 'system', 'Copy trading stopped',
-      `Returned ${rel.allocation + (rel.pnl || 0)} USDT to your wallet`);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const result = await stopCopy(req.params.relationId, req.user._id);
+    await notifyStopped(result);
+    res.json({ ok: true, returned: result.payout, fees: result.fees.total });
+  } catch (e) { sendError(res, e, 'Could not stop copying. Please try again.'); }
 });
 
-/* POST seed demo traders — admin only */
+/* POST seed traders — admin only */
 router.post('/seed', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -307,89 +371,14 @@ router.get('/admin/fees', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/* POST force-stop a copy relation — admin only */
+/* POST force-stop a copy relation — admin only (same settlement path as a user stop) */
 router.post('/admin/relations/:id/stop', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-    const rel = await CopyRelation.findById(req.params.id).populate('trader');
-    if (!rel || !rel.active) return res.status(404).json({ error: 'Not found or inactive' });
-
-    const user = await User.findById(rel.follower);
-    if (user) {
-      user.locked.USDT = Math.max(0, (user.locked.USDT || 0) - rel.allocation);
-      user.balances.USDT += rel.allocation + (rel.pnl || 0);
-      await user.save();
-    }
-    rel.active = false;
-    await rel.save();
-    if (rel.trader) {
-      rel.trader.followers = Math.max(0, rel.trader.followers - 1);
-      await rel.trader.save();
-    }
-
-    await notify(user._id, 'system', 'Copy trading stopped by admin',
-      `${rel.allocation + (rel.pnl || 0)} USDT returned to your wallet`);
-
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/* Global copy platform fee — admin only. */
-router.get('/admin/platform-fee', auth, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-    const setting = await Settings.findOne({ key: 'copyPlatformFeePercent' }).lean();
-    res.json({ platformFeePercent: setting ? Number(setting.value) : 2 });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/admin/platform-fee', auth, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-    const fee = Number(req.body.platformFeePercent);
-    if (!Number.isFinite(fee) || fee < 0 || fee > 20) return res.status(400).json({ error: 'Platform fee must be between 0 and 20%' });
-    await Settings.findOneAndUpdate({ key: 'copyPlatformFeePercent' }, { $set: { value: fee } }, { upsert: true, new: true, setDefaultsOnInsert: true });
-    res.json({ platformFeePercent: fee });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/* Edit a specific active copy's PnL and/or the linked trader's displayed stats. */
-router.post('/admin/relations/:id/edit', auth, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-    const rel = await CopyRelation.findById(req.params.id).populate('trader');
-    if (!rel) return res.status(404).json({ error: 'Copy relation not found' });
-    const { pnl, roi30d, winRate, followers, totalTrades } = req.body;
-    if (pnl !== undefined) {
-      const value = Number(pnl);
-      if (!Number.isFinite(value) || Math.abs(value) > 1000000000) return res.status(400).json({ error: 'Invalid PnL value' });
-      rel.pnl = Number(value.toFixed(8));
-      await rel.save();
-    }
-    const stats = {};
-    if (roi30d !== undefined) { const v = Number(roi30d); if (!Number.isFinite(v) || v < -100 || v > 1000) return res.status(400).json({ error: 'ROI must be between -100% and 1000%' }); stats.roi30d = v; }
-    if (winRate !== undefined) { const v = Number(winRate); if (!Number.isFinite(v) || v < 0 || v > 100) return res.status(400).json({ error: 'Win rate must be between 0 and 100%' }); stats.winRate = v; }
-    if (followers !== undefined) { const v = Number(followers); if (!Number.isInteger(v) || v < 0 || v > 100000000) return res.status(400).json({ error: 'Followers must be a non-negative whole number' }); stats.followers = v; }
-    if (totalTrades !== undefined) { const v = Number(totalTrades); if (!Number.isInteger(v) || v < 0 || v > 100000000) return res.status(400).json({ error: 'Trades must be a non-negative whole number' }); stats.totalTrades = v; }
-    if (Object.keys(stats).length) {
-      if (!rel.trader) return res.status(400).json({ error: 'Linked trader not found' });
-      Object.assign(rel.trader, stats);
-      if (stats.roi30d !== undefined) {
-        rel.trader.performanceHistory = rel.trader.performanceHistory || [];
-        const today = new Date(); today.setHours(12, 0, 0, 0);
-        const last = rel.trader.performanceHistory[rel.trader.performanceHistory.length - 1];
-        if (last && new Date(last.date).toDateString() === today.toDateString()) last.roi30d = stats.roi30d;
-        else rel.trader.performanceHistory.push({ date: today, roi30d: stats.roi30d });
-        if (rel.trader.performanceHistory.length > 180) rel.trader.performanceHistory = rel.trader.performanceHistory.slice(-180);
-      }
-      await rel.trader.save();
-      // An admin-set ROI is a new displayed baseline, not an automatic gain/loss event.
-      if (stats.roi30d !== undefined) {
-        await CopyRelation.updateMany({ trader: rel.trader._id, active: true }, { $set: { lastTraderRoi: stats.roi30d } });
-      }
-    }
-    res.json({ relation: rel, trader: rel.trader });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const result = await stopCopy(req.params.id, null);
+    await notifyStopped(result);
+    res.json({ ok: true, returned: result.payout, fees: result.fees.total });
+  } catch (e) { sendError(res, e, 'Could not stop this copy'); }
 });
 
 /* POST import traders from CSV — admin only */
@@ -480,7 +469,7 @@ router.post('/admin/traders/:id/fees', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/* POST adjust copy relation PnL — admin only (for demos/support) */
+/* POST adjust copy relation PnL — admin only (support) */
 router.post('/admin/relations/:id/adjust', auth, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });

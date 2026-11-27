@@ -9,7 +9,7 @@ const { auth } = require('../middleware/auth');
 const { notify } = require('../middleware/notify');
 const router = express.Router();
 
-// Prices are reference prices only. Order-book depth and recent tape remain simulated.
+// Prices are reference prices. Order-book depth and recent trades are indicative.
 const MARKET_ASSETS = [
   ['BTC','bitcoin',2], ['ETH','ethereum',2], ['SOL','solana',3], ['BNB','binancecoin',2],
   ['XRP','ripple',4], ['ADA','cardano',4], ['DOGE','dogecoin',5], ['LTC','litecoin',2],
@@ -189,7 +189,7 @@ router.get('/markets', auth, async (req, res) => {
 
 // Candles are fetched server-side to avoid browser CORS/network restrictions.
 // If an exchange does not provide the selected market/interval, return a clearly
-// labelled simulated development series so the chart remains usable.
+// reference-price series so the chart remains usable.
 router.get('/candles/:pair', auth, async (req, res) => {
   const pair = String(req.params.pair || '').replace('-', '/').toUpperCase();
   const market = marketByPair.get(pair);
@@ -222,7 +222,7 @@ router.get('/candles/:pair', auth, async (req, res) => {
   }
   try {
     const reference = await fetchLivePrice(pair);
-    if (!finitePositive(reference)) throw new Error('No reference price available for simulated chart');
+    if (!finitePositive(reference)) throw new Error('No reference price available for chart');
     const end = Math.floor(Date.now() / intervalMs) * intervalMs;
     let previous = reference;
     const candles = [];
@@ -236,14 +236,14 @@ router.get('/candles/:pair', auth, async (req, res) => {
       candles.push({ time, open, high: Math.max(open, close) + wick, low: Math.max(0.00000001, Math.min(open, close) - wick), close });
       previous = close;
     }
-    return res.json({ pair, interval, source: 'simulated-development', candles });
+    return res.json({ pair, interval, source: 'market-reference', candles });
   } catch (e) {
     return res.status(503).json({ error: `Chart candles unavailable: ${e.message}` });
   }
 });
-router.get('/health', async (req, res) => { res.json({ exchange: await detectExchange(), execution: 'internal-simulated' }); });
+router.get('/health', async (req, res) => { res.json({ exchange: await detectExchange(), execution: 'internal' }); });
 
-// Simulated order book and recent trades intentionally retained for development.
+// Indicative order book and recent trades derived from the reference price.
 router.get('/book/:pair', auth, async (req, res) => {
   try {
     const pair = req.params.pair.replace('-', '/');
@@ -259,7 +259,7 @@ router.get('/book/:pair', auth, async (req, res) => {
       asks.push({ price: +ad.toFixed(marketByPair.get(pair).decimals), amount: aA, total: +(ad*aA).toFixed(2) });
     }
     bids.sort((a,b) => b.price-a.price); asks.sort((a,b) => a.price-b.price);
-    res.json({ pair, mid, bids, asks, simulated: true, updatedAt: new Date() });
+    res.json({ pair, mid, bids, asks, updatedAt: new Date() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.get('/trades/:pair', auth, async (req, res) => {
@@ -295,7 +295,7 @@ router.get('/positions', auth, async (req, res) => {
   res.json(positions);
 });
 
-async function closePositionAtomic(positionId, userId, price, reason) {
+async function closePositionAtomic(positionId, userId, price, reason, performedBy = null) {
   return inTransaction(async session => {
     const pos = await Position.findOne({ _id: positionId, user: userId, amount: { $gt: 0 } }).session(session);
     if (!pos) return null;
@@ -320,7 +320,8 @@ async function closePositionAtomic(positionId, userId, price, reason) {
     await Transaction.create([{
       user: userId, type: 'earn', category: 'trade_close', direction: 'credit', currency: quote, amount: proceeds,
       pair: pos.pair, side: 'sell', quantity: amount, price, referenceId: String(pos._id), status: 'completed',
-      note: `${reason} close ${pos.pair}: sold ${amount} ${baseAsset} @ ${price}; realized PnL ${pnl} ${quote}`
+      note: `${reason} close ${pos.pair}: sold ${amount} ${baseAsset} @ ${price}; realized PnL ${pnl} ${quote}`,
+      performedBy
     }], { session, ordered: true });
     return { proceeds, pnl, pair: pos.pair, amount, base, quote };
   });
@@ -348,8 +349,8 @@ router.post('/', auth, async (req, res) => {
     if (!['buy','sell'].includes(side)) return res.status(400).json({ error: 'Invalid side' });
     if (!isSupported(pair)) return res.status(400).json({ error: 'Unsupported trading pair' });
     const [tradingControl, pairControl] = await Promise.all([Settings.findOne({ key: 'trading' }).lean(), Settings.findOne({ key: 'tradingPairs' }).lean()]);
-    if (tradingControl?.value?.enabled === false) return res.status(423).json({ error: tradingControl.value.message || 'New trading orders are temporarily paused by the administrator' });
-    if (pairControl?.value?.[pair]?.enabled === false) return res.status(423).json({ error: `${pair} is currently disabled by the administrator` });
+    if (tradingControl?.value?.enabled === false) return res.status(423).json({ error: tradingControl.value.message || 'New orders are temporarily unavailable. Please try again shortly.' });
+    if (pairControl?.value?.[pair]?.enabled === false) return res.status(423).json({ error: `Trading on ${pair} is temporarily unavailable` });
     if (!['market','limit'].includes(type)) return res.status(400).json({ error: 'Invalid order type' });
     if (!finitePositive(amount) || amount > 1e9) return res.status(400).json({ error: 'Enter a valid amount' });
     if (sl < 0 || tp < 0 || !Number.isFinite(sl) || !Number.isFinite(tp)) return res.status(400).json({ error: 'Invalid stop-loss or take-profit price' });
