@@ -18,7 +18,7 @@ router.get('/current', auth, async (req, res) => {
     const traders = await CopyTrader.find({ active: true })
       .sort({ roi30d: -1, winRate: -1 })
       .limit(10)
-      .select('displayName tier roi30d winRate followers totalEarned featured');
+      .select('displayName tier roi30d winRate followers featured');
 
     res.json({
       weekId: getWeekId(),
@@ -61,7 +61,6 @@ router.post('/snapshot', auth, async (req, res) => {
       roi30d: t.roi30d,
       winRate: t.winRate,
       followers: t.followers,
-      totalEarned: t.totalEarned || 0
     }));
 
     const snap = await LeaderboardSnapshot.create({ weekId, weekStart, weekEnd, entries });

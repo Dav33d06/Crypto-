@@ -5,31 +5,14 @@ const Position = require('../models/Position');
 const { auth } = require('../middleware/auth');
 const router = express.Router();
 
-const PRICES = { USDT: 1, BTC: 68000, ETH: 3500, SOL: 150, BNB: 600, XRP: 0.6, ADA: 0.5, DOGE: 0.15 };
+const priceService = require('../utils/priceService');
+const { DISPLAY_MAX_AGE_MS } = priceService;
 
-async function fetchPrices() {
-  try {
-    const res = await fetch(
-      'https://api.binance.com/api/v3/ticker/price?symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT"]',
-      { signal: AbortSignal.timeout(3000) }
-    );
-    if (res.ok) {
-      const arr = await res.json();
-      const m = {};
-      arr.forEach(x => {
-        const sym = x.symbol.replace('USDT', '');
-        m[sym] = parseFloat(x.price);
-      });
-      return { USDT: 1, ...m };
-    }
-  } catch {}
-  return PRICES;
-}
-
-async function snapshotToday(user, prices) {
+async function snapshotToday(user, prices, persist = true) {
   const today = new Date().toISOString().slice(0, 10);
   const usd = Object.keys(prices).reduce((sum, sym) =>
     sum + ((user.balances[sym] || 0) * prices[sym]), 0);
+  if (!persist) return usd;   // never store a snapshot valued with delayed prices
 
   await PortfolioSnapshot.findOneAndUpdate(
     { user: user._id, date: today },
@@ -41,8 +24,16 @@ async function snapshotToday(user, prices) {
 
 router.get('/', auth, async (req, res) => {
   const user = await User.findById(req.user._id);
-  const prices = await fetchPrices();
-  const currentUsd = await snapshotToday(user, prices);
+
+  // Only fetch prices for assets the user actually holds or has positions in (USDT is always 1)
+  const openPositions = await Position.find({ user: user._id, amount: { $gt: 0 } });
+  const needed = new Set(Object.keys(priceService.SYMBOLS).filter(sym => Number(user.balances?.[sym] || 0) > 0));
+  openPositions.forEach(p => needed.add(p.base));
+  let priceInfo;
+  try { priceInfo = await priceService.getPrices([...needed], { maxAgeMs: DISPLAY_MAX_AGE_MS }); }
+  catch (e) { return res.status(503).json({ error: e.message }); }
+  const prices = priceInfo.prices;
+  const currentUsd = await snapshotToday(user, prices, priceInfo.source === 'live');
 
   const existing = await PortfolioSnapshot.find({ user: user._id }).sort({ date: 1 });
   if (existing.length < 15) {
@@ -72,7 +63,7 @@ router.get('/', auth, async (req, res) => {
   const total = holdings.reduce((s, h) => s + h.usd, 0);
   holdings.forEach(h => h.pct = total > 0 ? (h.usd / total) * 100 : 0);
 
-  const positions = await Position.find({ user: user._id, amount: { $gt: 0 } });
+  const positions = openPositions;
   const positionsWithPnl = positions.map(p => {
     const currentPrice = prices[p.base] || p.avgCost;
     const marketValue = p.amount * currentPrice;
@@ -95,6 +86,7 @@ router.get('/', auth, async (req, res) => {
 
   res.json({
     total,
+    priceSource: priceInfo.source,
     holdings,
     history: history.map(s => ({ date: s.date, usd: s.usdValue })),
     pnl: {

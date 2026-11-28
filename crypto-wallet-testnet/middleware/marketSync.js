@@ -5,29 +5,12 @@ const Order = require('../models/Order');
 const Transaction = require('../models/Transaction');
 const { notify } = require('./notify');
 
-const priceCache = Object.create(null);
-const PRICE_TTL = 2500;
+const priceService = require('../utils/priceService');
 const supportedBases = ['BTC','ETH','SOL','BNB','XRP','ADA','DOGE','LTC','TRX','DOT','AVAX','LINK','BCH','TON','NEAR','ATOM','UNI'];
 
+// Protective orders only trigger on a fresh price; otherwise the scan skips this round.
 async function fetchPrice(pair) {
-  if (priceCache[pair] && Date.now() - priceCache[pair].at < PRICE_TTL) return priceCache[pair].price;
-  const symbol = pair.replace('/', '').toUpperCase();
-  for (const url of [
-    `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`,
-    `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${symbol}`
-  ]) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const price = Number(json.price || json.result?.list?.[0]?.lastPrice);
-      if (Number.isFinite(price) && price > 0) {
-        priceCache[pair] = { price, at: Date.now() };
-        return price;
-      }
-    } catch {}
-  }
-  return priceCache[pair]?.price || null;
+  return priceService.getPriceOrNull(pair.split('/')[0], { maxAgeMs: 30_000 });
 }
 
 async function closePosition(positionId, price, reason) {
@@ -107,4 +90,4 @@ function start() {
   intervalHandle = setInterval(scanPositions, 5000);
 }
 function stop() { if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; } }
-module.exports = { start, stop, priceCache, fetchPrice, scanPositions };
+module.exports = { start, stop, fetchPrice, scanPositions };

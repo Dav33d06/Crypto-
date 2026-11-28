@@ -3,7 +3,9 @@ const CopyRelation = require('../models/CopyRelation');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const mongoose = require('mongoose');
+const Order = require('../models/Order');
 const { getPlatformRate, calcFees, recordFees } = require('../utils/copyFees');
+const { realAllocations } = require('../utils/copyStats');
 const { notify } = require('./notify');
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -23,56 +25,82 @@ function makeHistory(roi, days = 180) {
 }
 
 /* ------------------------------------------------------------
-   Trader earnings: lifetime performance-fee income plus a live accrual.
-   - On first run a trader gets a lifetime baseline derived from followers, tier, ROI and fee.
-   - Every few seconds income accrues in proportion to followers' typical allocation and the
-     trader's recent returns, so the figures keep moving.
+   Assets under management (AUM)
+   AUM shown to followers = audience AUM (aumBase, evolves here) + real allocations on the platform.
+   Each trader's audience AUM changes at its own random moment: followers joining or leaving,
+   larger deposits or withdrawals, and market movement on allocated funds.
    ------------------------------------------------------------ */
-const AVG_ALLOCATION = { diamond: 2200, gold: 900, silver: 400, bronze: 180 };
-const dayKey = () => new Date().toISOString().slice(0, 10);
+const AVG_ALLOCATION = { diamond: 2400, gold: 1100, silver: 520, bronze: 260 };
+const stableUnit = t => parseInt(String(t._id).slice(-6), 16) / 0xffffff;       // stable 0..1 per trader
+const allocUnit = t => (AVG_ALLOCATION[t.tier] || 260) * (0.7 + 0.9 * stableUnit(t));
+const between = (a, b) => a + Math.random() * (b - a);
 
-// Estimated USDT earned per day from performance fees
-function earnRate(t) {
-  const alloc = AVG_ALLOCATION[t.tier] || 250;
-  const dailyReturn = Math.max(Number(t.roi30d) || 0, 3) / 30 / 100;
-  return Number(t.followers || 0) * alloc * dailyReturn * Number(t.performanceFee ?? 10) / 100;
+function nextAumDelayMs() {
+  const r = Math.random();
+  if (r < 0.70) return between(20_000, 150_000);      // most updates: every 20s - 2.5min
+  if (r < 0.95) return between(150_000, 420_000);     // sometimes: 2.5 - 7 min
+  return between(420_000, 900_000);                   // occasionally: 7 - 15 min
 }
 
-function earningsBaseline(t) {
-  const seed = parseInt(String(t._id).slice(-6), 16) / 0xffffff;      // stable per trader
-  const months = 3 + seed * 8;
-  const alloc = AVG_ALLOCATION[t.tier] || 250;
-  const roi = Math.max(Number(t.roi30d) || 0, 4);
-  return round(Number(t.followers || 0) * alloc * (roi / 100) * months * Number(t.performanceFee ?? 10) / 100 * (0.55 + seed * 0.5));
-}
+function baselineAum(t) { return round(Math.max(0, Number(t.followers || 0)) * allocUnit(t)); }
 
-async function accrueEarnings(seconds = 10) {
+async function updateAum() {
   try {
-    const traders = await CopyTrader.find({ active: true })
-      .select('tier roi30d followers performanceFee earnedDayKey earningsSeeded').lean();
-    const today = dayKey();
     const now = new Date();
-    const secondsToday = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const due = await CopyTrader.find({
+      active: true, user: null,
+      $or: [{ aumSeeded: { $ne: true } }, { nextAumAt: null }, { nextAumAt: { $lte: now } }]
+    }).select('tier followers aumBase aumSeeded').lean();
+    if (!due.length) return;
+
+    const allocations = await realAllocations();
     const ops = [];
-    for (const t of traders) {
-      if (!t.earningsSeeded) {
-        ops.push({ updateOne: {
-          filter: { _id: t._id, earningsSeeded: { $ne: true } },
-          update: { $inc: { totalEarned: earningsBaseline(t) }, $set: { earningsSeeded: true, earnedDayKey: today, earnedToday: round(earnRate(t) * secondsToday / 86400) } }
-        } });
+    for (const t of due) {
+      if (!t.aumSeeded) {
+        ops.push({ updateOne: { filter: { _id: t._id }, update: { $set: {
+          aumBase: baselineAum(t), aumSeeded: true, nextAumAt: new Date(Date.now() + between(1_000, 40_000))
+        } } } });
         continue;
       }
-      const delta = round(earnRate(t) * seconds / 86400 * (0.4 + Math.random() * 1.2));
-      if (delta <= 0) continue;
-      ops.push({ updateOne: {
-        filter: { _id: t._id },
-        update: t.earnedDayKey === today
-          ? { $inc: { totalEarned: delta, earnedToday: delta } }
-          : { $inc: { totalEarned: delta }, $set: { earnedDayKey: today, earnedToday: delta } }
-      } });
+      const realCount = (allocations.get(String(t._id)) || {}).count || 0;
+      let base = Number(t.aumBase || 0);
+      let followers = Number(t.followers || 0);
+      const unit = allocUnit(t);
+      const roll = Math.random();
+      if (roll < 0.30) {                                  // followers join or leave
+        const n = 1 + Math.floor(Math.random() * 3);
+        const joined = Math.random() < 0.62;
+        followers = Math.max(realCount, followers + (joined ? n : -n));
+        base = Math.max(0, base + (joined ? n : -n) * unit * between(0.6, 1.4));
+      } else if (roll < 0.40) {                           // larger deposit or withdrawal by existing followers
+        base *= 1 + (Math.random() < 0.6 ? 1 : -1) * between(0.01, 0.035);
+      } else {                                            // market movement on allocated funds
+        base *= 1 + between(-0.0045, 0.0055);
+      }
+      ops.push({ updateOne: { filter: { _id: t._id }, update: { $set: {
+        aumBase: round(Math.max(0, base)), followers, nextAumAt: new Date(Date.now() + nextAumDelayMs())
+      } } } });
     }
     if (ops.length) await CopyTrader.bulkWrite(ops);
-  } catch (e) { console.error('earnings accrual error:', e.message); }
+  } catch (e) { console.error('AUM update error:', e.message); }
+}
+
+/* Performance of a trader who trades on the platform, taken from their own closed trades (last 30 days). */
+async function realTraderStats(userId) {
+  const since = new Date(Date.now() - 30 * 864e5);
+  const [closes, trades, owner] = await Promise.all([
+    Transaction.find({ user: userId, category: 'trade_close', createdAt: { $gte: since } }).select('note').lean(),
+    Order.countDocuments({ user: userId, status: 'filled' }),
+    User.findById(userId).select('balances locked').lean()
+  ]);
+  const pnls = closes.map(c => Number((/realized PnL\s+(-?[\d.]+(?:e[-+]?\d+)?)/i.exec(c.note || '') || [])[1])).filter(Number.isFinite);
+  const wins = pnls.filter(p => p > 0).length;
+  const equity = Math.max(Number(owner?.balances?.USDT || 0) + Number(owner?.locked?.USDT || 0), 100);
+  return {
+    roi30d: round(pnls.reduce((a, b) => a + b, 0) / equity * 100),
+    winRate: pnls.length ? round(wins / pnls.length * 100) : 0,
+    totalTrades: trades
+  };
 }
 
 /* Trader performance profiles are refreshed gradually and daily history snapshots are stored. */
@@ -83,17 +111,24 @@ async function syncTraders() {
 
     for (const t of traders) {
       const previousRoi = Number(t.roi30d || 0);
-      const bias = { diamond: 0.018, gold: 0.009, silver: 0.001, bronze: -0.006 }[t.tier] || 0;
-      const delta = bias + (Math.random() - 0.5) * 0.12;
-      t.roi30d = round(clamp(previousRoi + delta, -60, 180));
-      const targetWin = { diamond: 72, gold: 63, silver: 55, bronze: 47 }[t.tier] || 50;
-      t.winRate = round(clamp(Number(t.winRate || targetWin) + (targetWin - Number(t.winRate || targetWin)) * 0.004 + (Math.random() - 0.5) * 0.06, 20, 95));
-      if (Math.random() > 0.985) t.totalTrades += 1;
-      if (Math.random() > 0.992) t.followers += 1;
+      if (t.user) {
+        // Trader running on the platform: performance comes from their own closed trades.
+        const stats = await realTraderStats(t.user);
+        t.roi30d = clamp(stats.roi30d, -100, 1000); t.winRate = stats.winRate; t.totalTrades = stats.totalTrades;
+        const f = Number(t.followers || 0);
+        t.tier = f >= 500 ? 'diamond' : f >= 100 ? 'gold' : f >= 10 ? 'silver' : 'bronze';
+      } else {
+        const bias = { diamond: 0.018, gold: 0.009, silver: 0.001, bronze: -0.006 }[t.tier] || 0;
+        const delta = bias + (Math.random() - 0.5) * 0.12;
+        t.roi30d = round(clamp(previousRoi + delta, -60, 180));
+        const targetWin = { diamond: 72, gold: 63, silver: 55, bronze: 47 }[t.tier] || 50;
+        t.winRate = round(clamp(Number(t.winRate || targetWin) + (targetWin - Number(t.winRate || targetWin)) * 0.004 + (Math.random() - 0.5) * 0.06, 20, 95));
+        if (Math.random() > 0.985) t.totalTrades += 1;
+      }
 
-      if (!t.performanceHistory || !t.performanceHistory.length) t.performanceHistory = makeHistory(previousRoi);
+      if (!t.user && (!t.performanceHistory || !t.performanceHistory.length)) t.performanceHistory = makeHistory(previousRoi);
       const today = new Date(); today.setHours(12, 0, 0, 0);
-      const last = t.performanceHistory[t.performanceHistory.length - 1];
+      const last = (t.performanceHistory || [])[(t.performanceHistory || []).length - 1];
       if (last && new Date(last.date).toDateString() === today.toDateString()) {
         last.roi30d = t.roi30d;
       } else {
@@ -114,12 +149,12 @@ async function syncTraders() {
       }
     }
 
-    // Followers are the count of active platform relations plus the trader's seeded audience.
+    // Follower count: platform traders show exactly their real followers; others never drop below their real followers.
     const relations = await CopyRelation.aggregate([{ $match: { active: true } }, { $group: { _id: '$trader', count: { $sum: 1 } } }]);
     const counts = new Map(relations.map(x => [String(x._id), x.count]));
     for (const t of traders) {
       const real = counts.get(String(t._id)) || 0;
-      if (Number(t.followers || 0) < real) { t.followers = real; await t.save(); }
+      if (t.user ? Number(t.followers || 0) !== real : Number(t.followers || 0) < real) { t.followers = real; await t.save(); }
     }
   } catch (e) { console.error('traderSync error:', e.message); }
 }
@@ -158,19 +193,19 @@ async function settleFees() {
 
 let intervalHandle = null;
 let feeInterval = null;
-let earningsInterval = null;
+let aumInterval = null;
 function start() {
   if (intervalHandle) return;
   console.log('📈 Trader ROI sync started');
   syncTraders();
-  accrueEarnings();
-  earningsInterval = setInterval(() => accrueEarnings(10), 10_000);
+  updateAum();
+  aumInterval = setInterval(updateAum, 3_000);   // checks who is due; each trader's own timing is randomised
   intervalHandle = setInterval(syncTraders, 60_000);
   feeInterval = setInterval(settleFees, 60 * 60 * 1000);
 }
 function stop() {
   if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
   if (feeInterval) { clearInterval(feeInterval); feeInterval = null; }
-  if (earningsInterval) { clearInterval(earningsInterval); earningsInterval = null; }
+  if (aumInterval) { clearInterval(aumInterval); aumInterval = null; }
 }
-module.exports = { start, stop, syncTraders, settleFees, accrueEarnings };
+module.exports = { start, stop, syncTraders, settleFees, updateAum };

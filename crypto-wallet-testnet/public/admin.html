@@ -70,6 +70,14 @@
     </div>
 
     <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <h3 style="margin:0;">Trader Applications</h3>
+        <select id="app-filter" onchange="loadTraderApplications()" style="width:auto; margin:0;"><option value="pending">Pending</option><option value="all">All</option></select>
+      </div>
+      <div id="trader-applications" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card">
       <h3>Copy Trading Activity</h3>
       <div class="grid grid-3" id="copy-stats"></div>
       <div id="copy-relations"></div>

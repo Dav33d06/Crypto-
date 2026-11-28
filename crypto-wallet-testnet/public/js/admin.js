@@ -472,7 +472,7 @@ window.populateCopyTraders = async (count = 100) => {
 const _origRefreshAll = refreshAll;
 refreshAll = async function () {
   await _origRefreshAll();
-  await Promise.all([loadCopyStats(), loadCopyRelations(), loadFeeStats(), loadCopyPlatformFee()]);
+  await Promise.all([loadCopyStats(), loadCopyRelations(), loadFeeStats(), loadCopyPlatformFee(), loadTraderApplications()]);
   if (typeof refreshAdminTools === 'function') await refreshAdminTools();
 };
 
@@ -544,3 +544,43 @@ window.confirmAdjustFees = async (traderId) => {
     await Promise.all([loadCopyStats(), loadCopyRelations()]);
   } catch (e) { toast(e.message, 'error'); }
 };
+
+/* ============ TRADER APPLICATIONS ============ */
+const STRATEGY_LABELS = { swing: 'Swing', scalping: 'Scalping', 'long-term': 'Long-term', mixed: 'Mixed' };
+async function loadTraderApplications() {
+  const el = document.getElementById('trader-applications'); if (!el) return;
+  try {
+    const status = document.getElementById('app-filter')?.value || 'pending';
+    const list = await api(`/api/copy/admin/applications?status=${encodeURIComponent(status)}`);
+    if (!list.length) { el.innerHTML = emptyState('📝', status === 'pending' ? 'No applications waiting for review' : 'No applications yet'); return; }
+    el.innerHTML = list.map(a => `
+      <div class="card" style="margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div style="min-width:0; flex:1;">
+            <div style="font-weight:700;">${escHtml(a.displayName)} <span class="badge ${a.status === 'approved' ? 'completed' : a.status === 'rejected' ? 'rejected' : 'pending'}">${escHtml(a.status)}</span></div>
+            <div class="tag">${escHtml(a.user?.username || 'unknown')} · ${escHtml(a.user?.email || '')}</div>
+            <div class="tag">KYC: ${escHtml(a.user?.kycStatus || '—')} · 2FA: ${a.user?.twoFA ? 'on' : 'off'} · Applied ${new Date(a.createdAt).toLocaleString()}</div>
+            <div style="margin-top:8px; font-size:14px; line-height:1.5;">${escHtml(a.bio)}</div>
+            <div class="tag" style="margin-top:6px;">Style: ${escHtml(STRATEGY_LABELS[a.strategy] || a.strategy)} · Experience: ${escHtml(a.experience)} yrs · Fee: ${a.performanceFee}%${a.markets ? ` · Markets: ${escHtml(a.markets)}` : ''}</div>
+            ${a.adminNote ? `<div class="tag" style="margin-top:6px;">Note: ${escHtml(a.adminNote)}</div>` : ''}
+          </div>
+          ${a.status === 'pending' ? `<div style="display:flex; gap:8px; align-items:flex-start;">
+            <button class="sm" onclick="approveApplication('${a._id}')">Approve</button>
+            <button class="danger sm" onclick="rejectApplication('${a._id}')">Reject</button></div>` : ''}
+        </div>
+      </div>`).join('');
+  } catch (e) { el.innerHTML = emptyState('⚠️', 'Could not load applications', e.message); }
+}
+
+async function approveApplication(id) {
+  if (!(await confirmAction({ title: 'Approve trader application', message: 'The applicant becomes a public trader and followers can start copying them.', confirmText: 'Approve' }))) return;
+  try { await api(`/api/copy/admin/applications/${id}/approve`, { method: 'POST', body: JSON.stringify({}) }); toast('Application approved', 'success'); loadTraderApplications(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+async function rejectApplication(id) {
+  const note = await confirmAction({ title: 'Reject application', message: 'The applicant will see this reason.', input: { label: 'Reason', placeholder: 'e.g. Please describe your strategy in more detail', maxlength: 300 }, confirmText: 'Reject', danger: true });
+  if (note === null) return;
+  try { await api(`/api/copy/admin/applications/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) }); toast('Application rejected', 'success'); loadTraderApplications(); }
+  catch (e) { toast(e.message, 'error'); }
+}

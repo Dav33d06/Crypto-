@@ -62,6 +62,8 @@ async function load(firstLoad = true) {
       document.getElementById('positions').innerHTML = emptyState('📈', 'No open positions', 'Open a trade to see your positions and PnL here.', { label: 'Go to Trade', href: '/orders.html' });
     }
 
+    const priceNote = document.getElementById('price-note');
+    if (priceNote) priceNote.textContent = p.priceSource === 'delayed' ? 'Prices are delayed. Values may differ slightly from current market rates.' : '';
     drawChart(p.history);
   } catch (e) {
     if (hEl && firstLoad) hEl.innerHTML = emptyState('⚠️', 'Could not load your portfolio', e.message || 'Please try again.');

@@ -7,6 +7,7 @@ const Position = require('../models/Position');
 const Settings = require('../models/Settings');
 const { auth } = require('../middleware/auth');
 const { notify } = require('../middleware/notify');
+const priceService = require('../utils/priceService');
 const router = express.Router();
 
 // Prices are reference prices. Order-book depth and recent trades are indicative.
@@ -19,8 +20,6 @@ const MARKET_ASSETS = [
 const MARKETS = MARKET_ASSETS.map(([base, coinId, decimals]) => ({ pair: `${base}/USDT`, base, quote: 'USDT', decimals, coinId }));
 const marketByPair = new Map(MARKETS.map(m => [m.pair, m]));
 const isSupported = pair => marketByPair.has(pair);
-const priceCache = Object.fromEntries(MARKETS.map(m => [m.pair, { price: 0, ts: 0 }]));
-const CACHE_TTL = 2500;
 let priceProvider = 'binance';
 let providerCheckedAt = 0;
 
@@ -43,40 +42,11 @@ async function detectExchange() {
   priceProvider = 'fallback'; providerCheckedAt = Date.now(); return priceProvider;
 }
 
+/* Live price for a pair, or null when no sufficiently fresh price exists (callers must then refuse to proceed). */
 async function fetchLivePrice(pair) {
   const market = marketByPair.get(pair);
   if (!market) return null;
-  const cached = priceCache[pair];
-  if (cached.price > 0 && Date.now() - cached.ts < CACHE_TTL) return cached.price;
-  const symbol = `${market.base}USDT`;
-  const providers = [
-    async () => {
-      const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, { signal: AbortSignal.timeout(3000) });
-      if (!r.ok) return 0;
-      return Number((await r.json()).price);
-    },
-    async () => {
-      const r = await fetch(`https://api.bybit.com/v5/market/tickers?category=spot&symbol=${symbol}`, { signal: AbortSignal.timeout(3000) });
-      if (!r.ok) return 0;
-      return Number((await r.json()).result?.list?.[0]?.lastPrice);
-    },
-    async () => {
-      const r = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${market.coinId}&vs_currencies=usd`, { signal: AbortSignal.timeout(3000) });
-      if (!r.ok) return 0;
-      return Number((await r.json())[market.coinId]?.usd);
-    }
-  ];
-  for (let i = 0; i < providers.length; i++) {
-    try {
-      const price = await providers[i]();
-      if (Number.isFinite(price) && price > 0) {
-        priceCache[pair] = { price, ts: Date.now() };
-        priceProvider = ['binance','bybit','coingecko'][i];
-        return price;
-      }
-    } catch {}
-  }
-  return cached.price || null;
+  return priceService.getPriceOrNull(market.base, { maxAgeMs: priceService.EXEC_MAX_AGE_MS });
 }
 
 function finitePositive(value) { const n = Number(value); return Number.isFinite(n) && n > 0; }
@@ -332,7 +302,7 @@ router.post('/positions/:id/close', auth, async (req, res) => {
     const pos = await Position.findOne({ _id: req.params.id, user: req.user._id, amount: { $gt: 0 } });
     if (!pos) return res.status(404).json({ error: 'Position not found' });
     const price = await fetchLivePrice(pos.pair);
-    if (!finitePositive(price)) return res.status(400).json({ error: 'Price unavailable' });
+    if (!finitePositive(price)) return res.status(400).json({ error: 'Live prices are temporarily unavailable. Please try again shortly.' });
     const result = await closePositionAtomic(pos._id, req.user._id, price, 'Manual');
     if (!result) return res.status(409).json({ error: 'Position was already closed' });
     await notify(req.user._id, 'system', 'Position closed', `Sold ${result.amount} ${result.base} @ ${price}; PnL ${result.pnl} ${result.quote}`).catch(() => {});
@@ -357,7 +327,7 @@ router.post('/', auth, async (req, res) => {
     if (type === 'limit' && !finitePositive(priceInput)) return res.status(400).json({ error: 'Enter a valid limit price' });
     if (side === 'sell' && (sl > 0 || tp > 0)) return res.status(400).json({ error: 'Attach stop-loss and take-profit to buy orders/long positions only' });
     const marketPrice = await fetchLivePrice(pair);
-    if (!finitePositive(marketPrice)) return res.status(400).json({ error: 'Reference price unavailable' });
+    if (!finitePositive(marketPrice)) return res.status(400).json({ error: 'Live prices are temporarily unavailable. Please try again shortly.' });
     const limitPrice = type === 'limit' ? priceInput : marketPrice;
     const estimatedNotional = amount * limitPrice;
     if (!Number.isFinite(estimatedNotional) || estimatedNotional < 1 || estimatedNotional > 1000000) return res.status(400).json({ error: 'Order value must be between 1 and 1,000,000 USDT' });

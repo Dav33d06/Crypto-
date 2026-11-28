@@ -8,6 +8,8 @@ const Settings = require('../models/Settings');
 const { auth } = require('../middleware/auth');
 const { notify } = require('../middleware/notify');
 const { round, getPlatformRate, calcFees, recordFees } = require('../utils/copyFees');
+const { realAllocations, withAum } = require('../utils/copyStats');
+const TraderApplication = require('../models/TraderApplication');
 const router = express.Router();
 
 
@@ -90,8 +92,11 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 
 /* GET all copy traders */
 router.get('/', auth, async (req, res) => {
-  const traders = await CopyTrader.find({ active: true }).select('-performanceHistory').sort({ featured: -1, roi30d: -1 }).lean();
-  res.json(traders);
+  const [traders, allocations] = await Promise.all([
+    CopyTrader.find({ active: true }).select('-performanceHistory').sort({ featured: -1, roi30d: -1 }).lean(),
+    realAllocations()
+  ]);
+  res.json(traders.map(t => withAum(t, allocations)));
 });
 
 /* GET my copy relations */
@@ -113,11 +118,11 @@ router.get('/fees', auth, async (req, res) => {
 router.get('/:id/profile', auth, async (req, res) => {
   try {
     const trader = await CopyTrader.findOne({ _id: req.params.id, active: true })
-      .select('displayName bio tier roi30d winRate followers totalTrades performanceFee platformFee featured totalEarned earnedToday performanceHistory').lean();
+      .select('displayName bio tier roi30d winRate followers totalTrades performanceFee platformFee featured aumBase performanceHistory').lean();
     if (!trader) return res.status(404).json({ error: 'Trader not found' });
     const risk = computeRisk(trader);
     delete trader.performanceHistory;
-    res.json({ ...trader, ...risk });
+    res.json({ ...withAum(trader, await realAllocations()), ...risk });
   } catch (e) { res.status(400).json({ error: 'Invalid trader' }); }
 });
 
@@ -485,6 +490,128 @@ router.post('/admin/relations/:id/adjust', auth, async (req, res) => {
 
     res.json({ relation: rel, adjustment: amt });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   BECOME A TRADER
+   ============================================================ */
+const TRADER_LIMITS = { minFee: 5, maxFee: 20, bioMin: 20, bioMax: 300, nameMin: 3, nameMax: 24 };
+const adminOnly = (req, res, next) => req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Admin only' });
+const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+async function traderSummary(trader) {
+  const allocations = await realAllocations();
+  const t = withAum(trader.toObject ? trader.toObject() : trader, allocations);
+  return {
+    _id: t._id, displayName: t.displayName, bio: t.bio, tier: t.tier, roi30d: t.roi30d, winRate: t.winRate,
+    followers: t.followers, totalTrades: t.totalTrades, performanceFee: t.performanceFee, aum: t.aum,
+    totalEarned: round(trader.totalEarned || 0), active: trader.active, createdAt: trader.createdAt
+  };
+}
+
+/* My eligibility, application and (if approved) trader profile */
+router.get('/trader/status', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('kycStatus twoFA');
+    const [application, trader, setting] = await Promise.all([
+      TraderApplication.findOne({ user: req.user._id }).sort({ createdAt: -1 }).lean(),
+      CopyTrader.findOne({ user: req.user._id }),
+      Settings.findOne({ key: 'copyPlatformFeePercent' }).lean()
+    ]);
+    const requirements = { kyc: user.kycStatus === 'verified', kycStatus: user.kycStatus, twoFA: !!user.twoFA };
+    res.json({
+      requirements, eligible: requirements.kyc && requirements.twoFA, limits: TRADER_LIMITS,
+      platformFeePercent: setting && Number.isFinite(Number(setting.value)) ? Number(setting.value) : null,
+      application: application ? {
+        status: application.status, displayName: application.displayName, adminNote: application.adminNote,
+        performanceFee: application.performanceFee, createdAt: application.createdAt, reviewedAt: application.reviewedAt
+      } : null,
+      trader: trader ? await traderSummary(trader) : null
+    });
+  } catch (e) { res.status(500).json({ error: 'Could not load your trader status' }); }
+});
+
+router.post('/trader/apply', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('kycStatus twoFA');
+    if (user.kycStatus !== 'verified') return res.status(400).json({ error: 'Verify your identity before applying' });
+    if (!user.twoFA) return res.status(400).json({ error: 'Enable two-factor authentication before applying' });
+    if (await CopyTrader.exists({ user: req.user._id })) return res.status(400).json({ error: 'You already have a trader profile' });
+    if (await TraderApplication.exists({ user: req.user._id, status: 'pending' })) return res.status(400).json({ error: 'You already have an application under review' });
+
+    const displayName = String(req.body.displayName || '').replace(/\s+/g, ' ').trim();
+    const bio = String(req.body.bio || '').trim();
+    const strategy = String(req.body.strategy || '');
+    const experience = String(req.body.experience || '');
+    const markets = String(req.body.markets || '').trim().slice(0, 80);
+    const fee = Number(req.body.performanceFee);
+
+    if (displayName.length < TRADER_LIMITS.nameMin || displayName.length > TRADER_LIMITS.nameMax) return res.status(400).json({ error: `Trader name must be ${TRADER_LIMITS.nameMin}–${TRADER_LIMITS.nameMax} characters` });
+    if (!/^[A-Za-z0-9 ._-]+$/.test(displayName)) return res.status(400).json({ error: 'Trader name can only contain letters, numbers, spaces, dots, dashes and underscores' });
+    if (bio.length < TRADER_LIMITS.bioMin || bio.length > TRADER_LIMITS.bioMax) return res.status(400).json({ error: `Describe your strategy in ${TRADER_LIMITS.bioMin}–${TRADER_LIMITS.bioMax} characters` });
+    if (!['swing', 'scalping', 'long-term', 'mixed'].includes(strategy)) return res.status(400).json({ error: 'Choose a trading style' });
+    if (!['<1', '1-3', '3-5', '5+'].includes(experience)) return res.status(400).json({ error: 'Choose your experience level' });
+    if (!Number.isInteger(fee) || fee < TRADER_LIMITS.minFee || fee > TRADER_LIMITS.maxFee) return res.status(400).json({ error: `Performance fee must be a whole number from ${TRADER_LIMITS.minFee}% to ${TRADER_LIMITS.maxFee}%` });
+    if (req.body.agree !== true) return res.status(400).json({ error: 'You must accept the trader terms' });
+
+    const nameRx = new RegExp('^' + escapeRegex(displayName) + '$', 'i');
+    if (await CopyTrader.exists({ displayName: nameRx }) || await TraderApplication.exists({ displayName: nameRx, status: 'pending' }))
+      return res.status(400).json({ error: 'That trader name is already taken' });
+
+    await TraderApplication.create({ user: req.user._id, displayName, bio, strategy, experience, markets, performanceFee: fee });
+    await notify(req.user._id, 'system', 'Trader application received', 'Our team will review your application and notify you of the decision.').catch(() => {});
+    res.status(201).json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Could not submit your application. Please try again.' }); }
+});
+
+/* Approved traders can update their public description */
+router.put('/trader/profile', auth, async (req, res) => {
+  try {
+    const bio = String(req.body.bio || '').trim();
+    if (bio.length < TRADER_LIMITS.bioMin || bio.length > TRADER_LIMITS.bioMax) return res.status(400).json({ error: `Description must be ${TRADER_LIMITS.bioMin}–${TRADER_LIMITS.bioMax} characters` });
+    const trader = await CopyTrader.findOneAndUpdate({ user: req.user._id }, { $set: { bio } }, { new: true });
+    if (!trader) return res.status(404).json({ error: 'You do not have a trader profile' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Could not update your profile' }); }
+});
+
+/* ---- admin review ---- */
+router.get('/admin/applications', auth, adminOnly, async (req, res) => {
+  try {
+    const filter = req.query.status && req.query.status !== 'all' ? { status: String(req.query.status) } : {};
+    const list = await TraderApplication.find(filter).sort({ createdAt: -1 }).limit(100).populate('user', 'username email kycStatus twoFA createdAt').lean();
+    res.json(list);
+  } catch (e) { res.status(500).json({ error: 'Could not load applications' }); }
+});
+
+router.post('/admin/applications/:id/approve', auth, adminOnly, async (req, res) => {
+  try {
+    const result = await withTxn(async session => {
+      const app = await TraderApplication.findOne({ _id: req.params.id, status: 'pending' }).session(session);
+      if (!app) throw new HttpError(404, 'Application not found or already reviewed');
+      const nameRx = new RegExp('^' + escapeRegex(app.displayName) + '$', 'i');
+      if (await CopyTrader.exists({ displayName: nameRx }).session(session)) throw new HttpError(400, 'A trader with this name already exists');
+      if (await CopyTrader.exists({ user: app.user }).session(session)) throw new HttpError(400, 'This user already has a trader profile');
+      await CopyTrader.create([{ user: app.user, displayName: app.displayName, bio: app.bio, tier: 'bronze', performanceFee: app.performanceFee, platformFee: 2 }], { session });
+      app.status = 'approved'; app.reviewedBy = req.user._id; app.reviewedAt = new Date(); app.adminNote = String(req.body.note || '').slice(0, 300);
+      await app.save({ session });
+      return app;
+    });
+    await notify(result.user, 'system', 'You are now a trader', `${result.displayName} is live. Followers can now start copying you.`).catch(() => {});
+    res.json({ ok: true });
+  } catch (e) { sendError(res, e, 'Could not approve this application'); }
+});
+
+router.post('/admin/applications/:id/reject', auth, adminOnly, async (req, res) => {
+  try {
+    const note = String(req.body.note || '').trim().slice(0, 300);
+    if (note.length < 5) return res.status(400).json({ error: 'Add a short reason for the applicant' });
+    const app = await TraderApplication.findOneAndUpdate({ _id: req.params.id, status: 'pending' },
+      { $set: { status: 'rejected', adminNote: note, reviewedBy: req.user._id, reviewedAt: new Date() } }, { new: true });
+    if (!app) return res.status(404).json({ error: 'Application not found or already reviewed' });
+    await notify(app.user, 'system', 'Trader application update', `Your application was not approved. Reason: ${note}`).catch(() => {});
+    res.json({ ok: true });
+  } catch (e) { sendError(res, e, 'Could not reject this application'); }
 });
 
 module.exports = router;

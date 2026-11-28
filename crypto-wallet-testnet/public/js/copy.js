@@ -15,6 +15,14 @@ const setHTML = (el, html) => { if (!el || el._last === html) return false; el.i
 const safeText = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const fmt = value => Number(value || 0).toFixed(2);
 const fmtMoney = value => Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Compact figure for assets under management: 842, 12.4K, 3.42M
+const fmtAum = value => {
+  const n = Number(value || 0);
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toFixed(0);
+};
 
 if (user) document.addEventListener('DOMContentLoaded', init);
 
@@ -83,7 +91,7 @@ window.applyFilters = (resetPage = true) => {
         <div><div class="tag">Win rate</div><div class="trader-metric">${fmt(t.winRate)}%</div></div>
         <div><div class="tag">Followers</div><div class="trader-metric">${Number(t.followers || 0).toLocaleString()}</div></div>
       </div>
-      <div class="trader-card-foot"><span>Total earned</span><b>${fmtMoney(t.totalEarned)} USDT</b></div>
+      <div class="trader-card-foot"><span>AUM</span><b title="${fmtMoney(t.aum)} USDT">${fmtAum(t.aum)} USDT</b></div>
       <div class="trader-card-foot"><span>Performance fee</span><b>${Number(t.performanceFee ?? 10)}%</b></div>
       <button style="width:100%" onclick="event.stopPropagation();openFollow('${t._id}')">Copy this trader</button>
       <div class="tag trader-view-hint">View profile &amp; performance history →</div>
@@ -140,11 +148,10 @@ window.openTraderProfile = async traderId => {
       <div class="grid grid-3 profile-stats">
         <div><span class="tag">30d ROI</span><b class="${t.roi30d >= 0 ? 'positive' : 'negative'}">${t.roi30d >= 0 ? '+' : ''}${fmt(t.roi30d)}%</b></div>
         <div><span class="tag">Win rate</span><b>${fmt(t.winRate)}%</b></div>
-        <div><span class="tag">Followers</span><b>${Number(t.followers || 0).toLocaleString()}</b></div>
+        <div><span class="tag">Followers</span><b data-live="followers">${Number(t.followers || 0).toLocaleString()}</b></div>
         <div><span class="tag">Total trades</span><b>${Number(t.totalTrades || 0).toLocaleString()}</b></div>
         <div><span class="tag">Performance fee</span><b>${Number(t.performanceFee ?? 10)}%</b></div>
-        <div><span class="tag">Total earned</span><b class="live-earned" data-live="earned">${fmtMoney(t.totalEarned)} USDT</b></div>
-        <div><span class="tag">Earned today</span><b class="live-earned positive" data-live="today">+${fmtMoney(t.earnedToday)} USDT</b></div>
+        <div><span class="tag">AUM</span><b class="live-earned" data-live="aum" title="${fmtMoney(t.aum)} USDT">${fmtAum(t.aum)} USDT</b></div>
         <div><span class="tag">Risk score</span><b class="risk-${String(t.riskLevel || 'Medium').toLowerCase()}">${Number(t.riskScore || 0)}/10 · ${safeText(t.riskLevel || '—')}</b></div>
       </div>
       <div class="profile-chart-head"><div><h4>Performance history</h4><span class="tag">Daily 30-day ROI snapshots</span></div>
@@ -170,10 +177,10 @@ function startProfileLive(traderId) {
         const el = document.querySelector(`[data-live="${key}"]`);
         if (el && el.textContent !== text) { el.textContent = text; el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); }
       };
-      set('earned', `${fmtMoney(t.totalEarned)} USDT`);
-      set('today', `+${fmtMoney(t.earnedToday)} USDT`);
+      set('aum', `${fmtAum(t.aum)} USDT`);
+      set('followers', Number(t.followers || 0).toLocaleString());
     } catch {}
-  }, 10000);
+  }, 12000);
 }
 
 window.loadTraderHistory = async days => {

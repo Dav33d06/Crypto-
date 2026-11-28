@@ -19,7 +19,7 @@ router.get('/strip', async (req, res) => {
     };
     res.json({ items: cached.data, updatedAt: cached.at });
   } catch (e) {
-    if (cached.data.length) return res.json({ items: cached.data, updatedAt: cached.at, stale: true });
+    if (cached.data.length && Date.now() - cached.at < 15 * 60 * 1000) return res.json({ items: cached.data, updatedAt: cached.at, stale: true });
     res.status(503).json({ error: 'Live market data is temporarily unavailable' });
   }
 });
